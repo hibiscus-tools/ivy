@@ -14,6 +14,7 @@ add_library(ivycore SHARED
 	source/camera.cpp
 	source/contexts.cpp
 	source/mesh.cpp
+	source/polygon.cpp
 	source/transform.cpp)
 
 add_executable(ivy source/main.cpp)

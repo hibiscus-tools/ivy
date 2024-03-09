@@ -13,6 +13,7 @@
 #include "camera.hpp"
 #include "contexts.hpp"
 #include "mesh.hpp"
+#include "polygon.hpp"
 #include "transform.hpp"
 
 #ifndef IVY_ROOT
@@ -59,24 +60,26 @@ static littlevk::Pipeline mesh_normals_pipeline(const DeviceResourceContext &drc
 		.with_push_constant <MVPConstants> (vk::ShaderStageFlagBits::eVertex);
 }
 
-struct VulkanMesh {
+struct VulkanGeometry {
 	littlevk::Buffer vertices;
 	littlevk::Buffer triangles;
 	size_t count;
 
-	static VulkanMesh from(const DeviceResourceContext &, const Mesh &);
+	template <typename G>
+	static VulkanGeometry from(const DeviceResourceContext &, const G &);
 };
 
-VulkanMesh VulkanMesh::from(const DeviceResourceContext &drc, const Mesh &m)
+template <typename G>
+VulkanGeometry VulkanGeometry::from(const DeviceResourceContext &drc, const G &g)
 {
-	VulkanMesh vm;
+	VulkanGeometry vm;
 
-	vm.count = 3 * m.triangles.size();
+	vm.count = 3 * g.triangles.size();
 
 	vm.vertices = littlevk::buffer
 	(
 		drc.device,
-		interleave_attributes(m),
+		interleave_attributes(g),
 		vk::BufferUsageFlagBits::eVertexBuffer,
 		drc.memory_properties
 	).unwrap(drc.dal);
@@ -84,7 +87,7 @@ VulkanMesh VulkanMesh::from(const DeviceResourceContext &drc, const Mesh &m)
 	vm.triangles = littlevk::buffer
 	(
 		drc.device,
-		m.triangles,
+		g.triangles,
 		vk::BufferUsageFlagBits::eIndexBuffer,
 		drc.memory_properties
 	).unwrap(drc.dal);
@@ -227,14 +230,21 @@ int main()
 
 	littlevk::Pipeline normals = mesh_normals_pipeline(drc, rc);
 
-	Mesh target_mesh = Mesh::load(IVY_ROOT "/data/planck.obj")[0];
-	ulog_info("main", "loaded target mesh with %d vertices and %d triangles\n", target_mesh.positions.size(), target_mesh.triangles.size());
+	// Mesh mesh = Mesh::load(IVY_ROOT "/data/planck.obj");
+	Polygon mesh = Polygon::screen();
+	VulkanGeometry vm_screen_quad = VulkanGeometry::from(drc, mesh);
 
-	Mesh source_mesh = Mesh::load(IVY_ROOT "/data/sphere.obj")[0];
-	ulog_info("main", "loaded source mesh with %d vertices and %d triangles\n", source_mesh.positions.size(), source_mesh.triangles.size());
+	// Build the pipeline	
+	using Layout = littlevk::VertexLayout <glm::vec2, glm::vec2>;
 
-	VulkanMesh vm_target = VulkanMesh::from(drc, target_mesh);
-	VulkanMesh vm_source = VulkanMesh::from(drc, source_mesh);
+	auto bundle = littlevk::ShaderStageBundle (drc.device, drc.dal)
+		.attach(readfile(IVY_SHADERS "/screen.vert"), vk::ShaderStageFlagBits::eVertex)
+		.attach(readfile(IVY_SHADERS "/sdf.frag"), vk::ShaderStageFlagBits::eFragment);
+
+	littlevk::Pipeline ppl = littlevk::PipelineCompiler <Layout> (drc.device, drc.window, drc.dal)
+		.with_render_pass(rc.render_pass)
+		.with_shader_bundle(bundle)
+		.with_push_constant <RayFrame> (vk::ShaderStageFlagBits::eFragment);
 
 	// Rendering
 	size_t frame = 0;
@@ -251,40 +261,13 @@ int main()
 		{
 			begin_render_pass(drc, rc, cmd, op);
 
-			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, normals.handle);
-
-			MVPConstants push_constants {
-				.view = camera.view_matrix(camera_transform),
-				.proj = camera.perspective_matrix()
-			};
-
-			// Target
-			push_constants.model = mesh_transform.matrix();
-
-			cmd.pushConstants <MVPConstants>
-			(
-				normals.layout,
-				vk::ShaderStageFlagBits::eVertex,
-				0, push_constants
-			);
-
-			cmd.bindVertexBuffers(0, { vm_target.vertices.buffer }, { 0 });
-			cmd.bindIndexBuffer(vm_target.triangles.buffer, 0, vk::IndexType::eUint32);
-			cmd.drawIndexed(vm_target.count, 1, 0, 0, 0);
-
-			// Source
-			push_constants.model = mesh_transform.matrix();
-
-			cmd.pushConstants <MVPConstants>
-			(
-				normals.layout,
-				vk::ShaderStageFlagBits::eVertex,
-				0, push_constants
-			);
-
-			cmd.bindVertexBuffers(0, { vm_source.vertices.buffer }, { 0 });
-			cmd.bindIndexBuffer(vm_source.triangles.buffer, 0, vk::IndexType::eUint32);
-			cmd.drawIndexed(vm_source.count, 1, 0, 0, 0);
+			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
+	
+			RayFrame rayframe = camera.rayframe(camera_transform);
+			cmd.pushConstants <RayFrame> (ppl.layout, vk::ShaderStageFlagBits::eFragment, 0, rayframe);
+			cmd.bindVertexBuffers(0, { vm_screen_quad.vertices.buffer }, { 0 });
+			cmd.bindIndexBuffer(vm_screen_quad.triangles.buffer, 0, vk::IndexType::eUint32);
+			cmd.drawIndexed(vm_screen_quad.count, 1, 0, 0, 0);
 
 			cmd.endRenderPass();
 		}

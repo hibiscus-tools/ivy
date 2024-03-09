@@ -95,7 +95,7 @@ std::vector <Mesh> Mesh::load(const std::filesystem::path &path)
 	(
 	 	std::filesystem::exists(path),
 		"loader",
-                "File \"%s\" does not exist\n", path.c_str()
+                "file \"%s\" does not exist\n", path.c_str()
 	);
 
         // Read scene
@@ -104,10 +104,9 @@ std::vector <Mesh> Mesh::load(const std::filesystem::path &path)
 
 	// Check if the scene was loaded
 	if ((!scene | scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode) {
-		ulog_error("loader", "Assimp error: \"%s\"\n", importer.GetErrorString());
+		ulog_error("loader", "ASSIMP error: \"%s\"\n", importer.GetErrorString());
 		return {};
 	}
 
 	return assimp_process_node(scene->mRootNode, scene, path.parent_path());
 }
-
