@@ -176,5 +176,18 @@ Biome Biome::load(const std::filesystem::path &path)
 
 	auto [meshes, materials] = assimp_process_node(scene->mRootNode, scene, path.parent_path());
 	
-	return Biome { meshes, materials };
+	// return Biome { meshes, materials };
+
+	std::vector <Inhabitant> children;
+	for (uint32_t i = 0; i < meshes.size(); i++) {
+		Geometry g { meshes[i], materials[i] };
+		Transformable t { g };
+		children.push_back(t);
+	}
+
+	Inhabitant i = Anchor();
+	i.identifier = "Loaded scene";
+	i.children = children;
+
+	return Biome { .inhabitants = { i } };
 }

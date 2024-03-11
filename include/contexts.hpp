@@ -16,20 +16,35 @@ struct DeviceResourceContext : littlevk::Skeleton {
 
 	littlevk::PresentSyncronization sync;
 
+	std::optional <std::pair <vk::CommandBuffer, littlevk::SurfaceOperation>> new_frame(size_t);
+	void end_frame(const vk::CommandBuffer &, size_t) const;
+	void present_frame(const littlevk::SurfaceOperation &, size_t);
+	bool valid_window() const;
+
 	static DeviceResourceContext from(const vk::PhysicalDevice &, const std::vector <const char *> &, const vk::PhysicalDeviceFeatures2KHR &);
 };
-
-std::optional <std::pair <vk::CommandBuffer, littlevk::SurfaceOperation>> new_frame(DeviceResourceContext &, size_t);
-void end_frame(const DeviceResourceContext &, const vk::CommandBuffer &, size_t);
-void present_frame(DeviceResourceContext &, const littlevk::SurfaceOperation &, size_t);
-bool valid_window(const DeviceResourceContext &);
 
 // For one render pass
 struct RenderContext {
 	vk::RenderPass render_pass;
 	std::vector <vk::Framebuffer> framebuffers;
 
-	static RenderContext from(DeviceResourceContext &);
+	static RenderContext from(const DeviceResourceContext &);
 };
 
-void begin_render_pass(const DeviceResourceContext &, const RenderContext &, const vk::CommandBuffer &, const littlevk::SurfaceOperation &);
+// Pair these together to begin a render pass
+struct LiveRenderContext {
+	const DeviceResourceContext &drc;
+	const RenderContext &rc;
+
+	LiveRenderContext(const DeviceResourceContext &drc, const RenderContext &rc)
+			: drc(drc), rc(rc) {}
+
+	void begin_render_pass(const vk::CommandBuffer &, const littlevk::SurfaceOperation &);
+};
+
+// For an ImGui context
+void imgui_context_from(const DeviceResourceContext &, const RenderContext &);
+
+void imgui_begin();
+void imgui_end(const vk::CommandBuffer &);

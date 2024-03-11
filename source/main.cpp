@@ -5,14 +5,15 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <imgui/imgui.h>
+
 #include <littlevk/littlevk.hpp>
+#include <microlog/microlog.h>
 
-// TODO: move to dependencies
-#include "microlog.h"
-
+#include "biome.hpp"
+#include "caches.hpp"
 #include "camera.hpp"
 #include "contexts.hpp"
-#include "biome.hpp"
 #include "transform.hpp"
 
 #ifndef IVY_ROOT
@@ -94,7 +95,7 @@ VulkanGeometry VulkanGeometry::from(const DeviceResourceContext &drc, const G &g
 	return vm;
 }
 
-void handle_key_input(const DeviceResourceContext &drc, Transform &camera_transform)
+void handle_key_input(GLFWwindow *const win, Transform &camera_transform)
 {
 	static float last_time = 0.0f;
 
@@ -104,8 +105,6 @@ void handle_key_input(const DeviceResourceContext &drc, Transform &camera_transf
 	last_time = glfwGetTime();
 
 	// TODO: littlevk io system
-	GLFWwindow *win = drc.window->handle;
-
 	glm::vec3 velocity(0.0f);
 	if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS)
 		velocity.z -= delta;
@@ -137,11 +136,11 @@ struct MouseInfo {
 void button_callback(GLFWwindow *window, int button, int action, int mods)
 {
 	// Ignore if on ImGui window
-	// ImGuiIO &io = ImGui::GetIO();
-	// io.AddMouseButtonEvent(button, action);
-	//
-	// if (ImGui::GetIO().WantCaptureMouse)
-	// 	return;
+	ImGuiIO &io = ImGui::GetIO();
+	io.AddMouseButtonEvent(button, action);
+	
+	if (ImGui::GetIO().WantCaptureMouse)
+		return;
 
 	if (button == GLFW_MOUSE_BUTTON_LEFT) {
 		mouse.drag = (action == GLFW_PRESS);
@@ -155,11 +154,11 @@ void cursor_callback(GLFWwindow *window, double xpos, double ypos)
 	Transform *camera_transform = (Transform *) glfwGetWindowUserPointer(window);
 
 	// Ignore if on ImGui window
-	// ImGuiIO &io = ImGui::GetIO();
-	// io.MousePos = ImVec2(xpos, ypos);
-	//
-	// if (io.WantCaptureMouse)
-	// 	return;
+	ImGuiIO &io = ImGui::GetIO();
+	io.MousePos = ImVec2(xpos, ypos);
+	
+	if (io.WantCaptureMouse)
+		return;
 
 	if (mouse.voided) {
 		mouse.last_x = xpos;
@@ -186,101 +185,6 @@ void cursor_callback(GLFWwindow *window, double xpos, double ypos)
 		if (camera_transform->rotation.x < -89.0f)
 			camera_transform->rotation.x = -89.0f;
 	}
-}
-
-struct DeviceTextureCache {
-	vk::Device device;
-	vk::CommandPool command_pool;
-	vk::Queue queue;
-	vk::PhysicalDeviceMemoryProperties memory_properties;
-	
-	littlevk::Deallocator *dal;
-
-	std::unordered_map <std::string, littlevk::Image> textures;
-
-	bool contains(const std::filesystem::path &path) {
-		return textures.count(path.string()) > 0;
-	}
-
-	const littlevk::Image &operator[](const std::filesystem::path &path) const {
-		return textures.at(path.string());
-	}
-
-	const littlevk::Image &scapegoat() const {
-		// TODO: populate with a blank texture if needed (or load a checkerboard, etc)
-		return textures.begin()->second;
-	}
-
-	static DeviceTextureCache from(const DeviceResourceContext &drc) {
-		DeviceTextureCache dtc {
-			.device = drc.device,
-			.command_pool = drc.command_pool,
-			.queue = drc.graphics_queue,
-			.memory_properties = drc.memory_properties,
-			.dal = drc.dal
-		};
-
-		return dtc;
-	}
-};
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
-
-// TODO: 2 separate functionalities for texture cache
-// 1. Load texture into host memory
-// 2. Upload texture into device memory (not everything needs to be uploaded)
-static void load_texture(DeviceTextureCache &dtc, const std::filesystem::path &path)
-{
-	std::string tr = path.string();
-	if (dtc.contains(tr))
-		return;
-
-	ulog_assert(std::filesystem::exists(path), "load_texture", "could not find path %s\n", tr.c_str());
-
-	// TODO: common image loading utility
-	int width;
-	int height;
-	int channels;
-
-	stbi_set_flip_vertically_on_load(true);
-
-	uint8_t *pixels = stbi_load(tr.c_str(), &width, &height, &channels, 4);
-
-	littlevk::Image image = littlevk::image(dtc.device, {
-		(uint32_t) width, (uint32_t) height,
-		vk::Format::eR8G8B8A8Unorm,
-		vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
-		vk::ImageAspectFlagBits::eColor
-	}, dtc.memory_properties).unwrap(dtc.dal);
-
-	// Upload the image data
-	littlevk::Buffer staging_buffer = littlevk::buffer(
-		dtc.device,
-		4 * width * height,
-		vk::BufferUsageFlagBits::eTransferSrc,
-		dtc.memory_properties
-	).value;
-
-	littlevk::upload(dtc.device, staging_buffer, pixels);
-
-	// TODO: some state wise struct to simplify transitioning?
-	littlevk::submit_now(dtc.device, dtc.command_pool, dtc.queue,
-		[&](const vk::CommandBuffer &cmd) {
-			littlevk::transition(cmd, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
-			littlevk::copy_buffer_to_image(cmd, image, staging_buffer, vk::ImageLayout::eTransferDstOptimal);
-			littlevk::transition(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-		}
-	);
-
-	// Free interim data
-	littlevk::destroy_buffer(dtc.device, staging_buffer);
-	stbi_image_free(pixels);
-
-	ulog_info("load_texture", "loaded image (%s) with dimensions (%d, %d)\n", tr.c_str(), width, height);
-
-	// app.image_cache[path.string()] = image;
-	dtc.textures[tr] = image;
 }
 
 int main()
@@ -317,6 +221,9 @@ int main()
 	// Specific rendering context
 	RenderContext rc = RenderContext::from(drc);
 
+	// ImGui context
+	imgui_context_from(drc, rc);
+
 	Camera camera;
 	Transform camera_transform;
 	Transform mesh_transform;
@@ -329,16 +236,18 @@ int main()
 
 	// Load the scene
 	Biome biome = Biome::load(IVY_ROOT "/data/sponza/sponza.obj");
+
+	const auto &geometries = biome.grab_all <Geometry> ();
 	
 	std::vector <VulkanGeometry> vgs;
-	for (const Mesh &mesh : biome.geometry)
-		vgs.emplace_back(VulkanGeometry::from(drc, mesh));
+	for (const Geometry &g : geometries)
+		vgs.emplace_back(VulkanGeometry::from(drc, g.mesh));
 
 	// TODO: gather all textures, then load them in parallel (thread pool)
-	for (const Material &material : biome.materials) {
-		const auto &textures = material.textures;
+	for (const Geometry &g : geometries) {
+		const auto &textures = g.material.textures;
 		if (textures.diffuse.size())
-			load_texture(dtc, textures.diffuse);
+			dtc.load(textures.diffuse);
 	}
 
 	// Build the pipeline	
@@ -379,7 +288,7 @@ int main()
 
 	// Construct descriptor sets for each mesh
 	std::vector <vk::DescriptorSet> dsets;
-	for (const Material &material : biome.materials) {
+	for (const Geometry &g : geometries) {
 		// TODO: allocate all in a batch outside...
 		vk::DescriptorSet dset = drc.device.allocateDescriptorSets
 		(
@@ -390,16 +299,18 @@ int main()
 			
 		vk::DescriptorImageInfo image_info {};
 
-		const auto &textures = material.textures;
+		const auto &textures = g.material.textures;
 		if (textures.diffuse.size()) {
-			const littlevk::Image &image = dtc[textures.diffuse];
+			dtc.upload(textures.diffuse);
+
+			const littlevk::Image &image = dtc.device_textures[textures.diffuse];
 
 			image_info  = vk::DescriptorImageInfo {
 				sampler, image.view,
 				vk::ImageLayout::eShaderReadOnlyOptimal
 			};
 		} else {
-			const littlevk::Image &image = dtc.scapegoat();
+			const littlevk::Image &image = dtc.device_textures.begin()->second;
 
 			image_info  = vk::DescriptorImageInfo {
 				sampler, image.view,
@@ -421,18 +332,18 @@ int main()
 
 	// Rendering
 	size_t frame = 0;
-	while (valid_window(drc)) {
+	while (drc.valid_window()) {
 		// Get events
 		glfwPollEvents();
 
 		// Moving the camera
-		handle_key_input(drc, camera_transform);
+		handle_key_input(drc.window->handle, camera_transform);
 
-		auto [cmd, op] = *new_frame(drc, frame);
+		auto [cmd, op] = drc.new_frame(frame).value();
 
 		// Render things
 		{
-			begin_render_pass(drc, rc, cmd, op);
+			LiveRenderContext(drc, rc).begin_render_pass(cmd, op);
 
 			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
 
@@ -454,18 +365,23 @@ int main()
 			}
 
 			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
+
+			imgui_begin();
+
+			if (ImGui::Begin("Wee")) {
+				ImGui::End();
+			}
+
+			imgui_end(cmd);
+
 			cmd.endRenderPass();
 		}
 
-		end_frame(drc, cmd, frame);
+		drc.end_frame(cmd, frame);
 
 		// NOTE: this part is optional for a differentiable renderer
-		present_frame(drc, op, frame);
+		drc.present_frame(op, frame);
 
 		frame = 1 - frame;
 	}
-
-	// TODO: silhouette based gradient
-	// Also image based sdf of the silhouettee; sobel and then flood fill
-	// (test in python or something); should bring denser gradients for points outside the silhouette
 }

@@ -1,3 +1,7 @@
+#include <imgui/imgui.h>
+#include <imgui/backends/imgui_impl_glfw.h>
+#include <imgui/backends/imgui_impl_vulkan.h>
+
 #include "contexts.hpp"
 
 DeviceResourceContext DeviceResourceContext::from(const vk::PhysicalDevice &phdev, const std::vector <const char *> &extensions, const vk::PhysicalDeviceFeatures2KHR &features)
@@ -41,26 +45,26 @@ DeviceResourceContext DeviceResourceContext::from(const vk::PhysicalDevice &phde
 	return drc;
 }
 
-std::optional <std::pair <vk::CommandBuffer, littlevk::SurfaceOperation>> new_frame(DeviceResourceContext &drc, size_t frame)
+std::optional <std::pair <vk::CommandBuffer, littlevk::SurfaceOperation>> DeviceResourceContext::new_frame(size_t frame)
 {
 	// Get next image
 	littlevk::SurfaceOperation op;
-	op = littlevk::acquire_image(drc.device, drc.swapchain.swapchain, drc.sync[frame]);
+	op = littlevk::acquire_image(device, swapchain.swapchain, sync[frame]);
 	if (op.status == littlevk::SurfaceOperation::eResize) {
-		drc.resize();
+		resize();
 		return std::nullopt;
 	}
 
-	vk::CommandBuffer cmd = drc.command_buffers[frame];
+	vk::CommandBuffer cmd = command_buffers[frame];
 	cmd.begin(vk::CommandBufferBeginInfo {});
 
-	littlevk::viewport_and_scissor(cmd, littlevk::RenderArea(drc.window));
+	littlevk::viewport_and_scissor(cmd, littlevk::RenderArea(window));
 
 	// Record command buffer
 	return std::make_pair(cmd, op);
 }
 
-void end_frame(const DeviceResourceContext &drc, const vk::CommandBuffer &cmd, size_t frame)
+void DeviceResourceContext::end_frame(const vk::CommandBuffer &cmd, size_t frame) const
 {
 	cmd.end();
 
@@ -69,29 +73,29 @@ void end_frame(const DeviceResourceContext &drc, const vk::CommandBuffer &cmd, s
 	vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 
 	vk::SubmitInfo submit_info {
-		1, &drc.sync.image_available[frame],
+		1, &sync.image_available[frame],
 		&wait_stage,
 		1, &cmd,
-		1, &drc.sync.render_finished[frame]
+		1, &sync.render_finished[frame]
 	};
 
-	drc.graphics_queue.submit(submit_info, drc.sync.in_flight[frame]);
+	graphics_queue.submit(submit_info, sync.in_flight[frame]);
 }
 
-void present_frame(DeviceResourceContext &drc, const littlevk::SurfaceOperation &op, size_t frame)
+void DeviceResourceContext::present_frame(const littlevk::SurfaceOperation &op, size_t frame)
 {
 	// Send image to the screen
-	littlevk::SurfaceOperation pop = littlevk::present_image(drc.present_queue, drc.swapchain.swapchain, drc.sync[frame], op.index);
+	littlevk::SurfaceOperation pop = littlevk::present_image(present_queue, swapchain.swapchain, sync[frame], op.index);
 	if (pop.status == littlevk::SurfaceOperation::eResize)
-		drc.resize();
+		resize();
 }
 
-bool valid_window(const DeviceResourceContext &drc)
+bool DeviceResourceContext::valid_window() const
 {
-	return glfwWindowShouldClose(drc.window->handle) == 0;
+	return glfwWindowShouldClose(window->handle) == 0;
 }
 
-RenderContext RenderContext::from(DeviceResourceContext &drc)
+RenderContext RenderContext::from(const DeviceResourceContext &drc)
 {
 	RenderContext rc;
 
@@ -113,18 +117,20 @@ RenderContext RenderContext::from(DeviceResourceContext &drc)
 	).unwrap(drc.dal);
 
 	// Create framebuffers from the swapchain
-	littlevk::FramebufferSetInfo fb_info;
-	fb_info.swapchain = &drc.swapchain;
-	fb_info.render_pass = rc.render_pass;
-	fb_info.extent = drc.window->extent;
-	fb_info.depth_buffer = &depth_buffer.view;
+	littlevk::FramebufferSetInfo fb_info {
+		.swapchain = drc.swapchain,
+		.render_pass = rc.render_pass,
+		.extent = drc.window->extent,
+		.depth_buffer = depth_buffer.view
+	};
 
 	rc.framebuffers = littlevk::framebuffers(drc.device, fb_info).unwrap(drc.dal);
 
 	return rc;
 }
 
-void begin_render_pass(const DeviceResourceContext &drc, const RenderContext &rc, const vk::CommandBuffer &cmd, const littlevk::SurfaceOperation &op)
+// TODO: bind(...) to return this?
+void LiveRenderContext::begin_render_pass(const vk::CommandBuffer &cmd, const littlevk::SurfaceOperation &op)
 {
 	const auto &rpbi = littlevk::default_rp_begin_info <2>
 		(rc.render_pass, rc.framebuffers[op.index], drc.window)
@@ -135,3 +141,51 @@ void begin_render_pass(const DeviceResourceContext &drc, const RenderContext &rc
 	return cmd.beginRenderPass(rpbi, vk::SubpassContents::eInline);
 }
 
+// ImGui configureation
+void imgui_context_from(const DeviceResourceContext &drc, const RenderContext &rc)
+{
+	ImGui::CreateContext();
+	ImGui_ImplGlfw_InitForVulkan(drc.window->handle, true);
+
+	// Allocate descriptor pool
+	vk::DescriptorPoolSize pool_size {
+		vk::DescriptorType::eCombinedImageSampler, 1 << 10
+	};
+
+	vk::DescriptorPool descriptor_pool = littlevk::descriptor_pool(
+		drc.device, vk::DescriptorPoolCreateInfo {
+			{}, 1 << 10, pool_size
+		}
+	).unwrap(drc.dal);
+
+	// Initialize ImGui
+	ImGui_ImplVulkan_InitInfo init_info = {};
+
+	init_info.Instance = littlevk::detail::get_vulkan_instance();
+	init_info.DescriptorPool = descriptor_pool;
+	init_info.Device = drc.device;
+	init_info.ImageCount = 3;
+	init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+	init_info.MinImageCount = 3;
+	init_info.PhysicalDevice = drc.phdev;
+	init_info.Queue = drc.graphics_queue;
+	init_info.RenderPass = rc.render_pass;
+	
+	ImGui_ImplVulkan_Init(&init_info);
+}
+
+void imgui_begin()
+{
+	ImGui_ImplVulkan_NewFrame();
+	ImGui_ImplGlfw_NewFrame();
+	ImGui::NewFrame();
+}
+
+
+void imgui_end(const vk::CommandBuffer &cmd)
+{
+	ImGui::Render();
+
+	// Write to the command buffer
+	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+}
