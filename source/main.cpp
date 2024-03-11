@@ -12,8 +12,7 @@
 
 #include "camera.hpp"
 #include "contexts.hpp"
-#include "mesh.hpp"
-#include "polygon.hpp"
+#include "biome.hpp"
 #include "transform.hpp"
 
 #ifndef IVY_ROOT
@@ -99,7 +98,7 @@ void handle_key_input(const DeviceResourceContext &drc, Transform &camera_transf
 {
 	static float last_time = 0.0f;
 
-	constexpr float speed = 100.0f;
+	constexpr float speed = 250.0f;
 
 	float delta = speed * float(glfwGetTime() - last_time);
 	last_time = glfwGetTime();
@@ -189,6 +188,101 @@ void cursor_callback(GLFWwindow *window, double xpos, double ypos)
 	}
 }
 
+struct DeviceTextureCache {
+	vk::Device device;
+	vk::CommandPool command_pool;
+	vk::Queue queue;
+	vk::PhysicalDeviceMemoryProperties memory_properties;
+	
+	littlevk::Deallocator *dal;
+
+	std::unordered_map <std::string, littlevk::Image> textures;
+
+	bool contains(const std::filesystem::path &path) {
+		return textures.count(path.string()) > 0;
+	}
+
+	const littlevk::Image &operator[](const std::filesystem::path &path) const {
+		return textures.at(path.string());
+	}
+
+	const littlevk::Image &scapegoat() const {
+		// TODO: populate with a blank texture if needed (or load a checkerboard, etc)
+		return textures.begin()->second;
+	}
+
+	static DeviceTextureCache from(const DeviceResourceContext &drc) {
+		DeviceTextureCache dtc {
+			.device = drc.device,
+			.command_pool = drc.command_pool,
+			.queue = drc.graphics_queue,
+			.memory_properties = drc.memory_properties,
+			.dal = drc.dal
+		};
+
+		return dtc;
+	}
+};
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+
+// TODO: 2 separate functionalities for texture cache
+// 1. Load texture into host memory
+// 2. Upload texture into device memory (not everything needs to be uploaded)
+static void load_texture(DeviceTextureCache &dtc, const std::filesystem::path &path)
+{
+	std::string tr = path.string();
+	if (dtc.contains(tr))
+		return;
+
+	ulog_assert(std::filesystem::exists(path), "load_texture", "could not find path %s\n", tr.c_str());
+
+	// TODO: common image loading utility
+	int width;
+	int height;
+	int channels;
+
+	stbi_set_flip_vertically_on_load(true);
+
+	uint8_t *pixels = stbi_load(tr.c_str(), &width, &height, &channels, 4);
+
+	littlevk::Image image = littlevk::image(dtc.device, {
+		(uint32_t) width, (uint32_t) height,
+		vk::Format::eR8G8B8A8Unorm,
+		vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+		vk::ImageAspectFlagBits::eColor
+	}, dtc.memory_properties).unwrap(dtc.dal);
+
+	// Upload the image data
+	littlevk::Buffer staging_buffer = littlevk::buffer(
+		dtc.device,
+		4 * width * height,
+		vk::BufferUsageFlagBits::eTransferSrc,
+		dtc.memory_properties
+	).value;
+
+	littlevk::upload(dtc.device, staging_buffer, pixels);
+
+	// TODO: some state wise struct to simplify transitioning?
+	littlevk::submit_now(dtc.device, dtc.command_pool, dtc.queue,
+		[&](const vk::CommandBuffer &cmd) {
+			littlevk::transition(cmd, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+			littlevk::copy_buffer_to_image(cmd, image, staging_buffer, vk::ImageLayout::eTransferDstOptimal);
+			littlevk::transition(cmd, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+		}
+	);
+
+	// Free interim data
+	littlevk::destroy_buffer(dtc.device, staging_buffer);
+	stbi_image_free(pixels);
+
+	ulog_info("load_texture", "loaded image (%s) with dimensions (%d, %d)\n", tr.c_str(), width, height);
+
+	// app.image_cache[path.string()] = image;
+	dtc.textures[tr] = image;
+}
+
 int main()
 {
 	static const std::vector <const char *> extensions {
@@ -217,6 +311,9 @@ int main()
 	// Configure a device resource context
 	DeviceResourceContext drc = DeviceResourceContext::from(phdev, extensions, features);
 
+	// Texture cache
+	DeviceTextureCache dtc = DeviceTextureCache::from(drc);
+
 	// Specific rendering context
 	RenderContext rc = RenderContext::from(drc);
 
@@ -224,27 +321,103 @@ int main()
 	Transform camera_transform;
 	Transform mesh_transform;
 
+	camera.aspect = drc.aspect_ratio();
+
 	glfwSetWindowUserPointer(drc.window->handle, &camera_transform);
 	glfwSetMouseButtonCallback(drc.window->handle, button_callback);
 	glfwSetCursorPosCallback(drc.window->handle, cursor_callback);
 
-	littlevk::Pipeline normals = mesh_normals_pipeline(drc, rc);
+	// Load the scene
+	Biome biome = Biome::load(IVY_ROOT "/data/sponza/sponza.obj");
+	
+	std::vector <VulkanGeometry> vgs;
+	for (const Mesh &mesh : biome.geometry)
+		vgs.emplace_back(VulkanGeometry::from(drc, mesh));
 
-	// Mesh mesh = Mesh::load(IVY_ROOT "/data/planck.obj");
-	Polygon mesh = Polygon::screen();
-	VulkanGeometry vm_screen_quad = VulkanGeometry::from(drc, mesh);
+	// TODO: gather all textures, then load them in parallel (thread pool)
+	for (const Material &material : biome.materials) {
+		const auto &textures = material.textures;
+		if (textures.diffuse.size())
+			load_texture(dtc, textures.diffuse);
+	}
 
 	// Build the pipeline	
-	using Layout = littlevk::VertexLayout <glm::vec2, glm::vec2>;
+	using Layout = littlevk::VertexLayout <glm::vec3, glm::vec3, glm::vec2>;
 
-	auto bundle = littlevk::ShaderStageBundle (drc.device, drc.dal)
-		.attach(readfile(IVY_SHADERS "/screen.vert"), vk::ShaderStageFlagBits::eVertex)
-		.attach(readfile(IVY_SHADERS "/sdf.frag"), vk::ShaderStageFlagBits::eFragment);
+	auto bundle = littlevk::ShaderStageBundle(drc.device, drc.dal)
+		.attach(readfile(IVY_SHADERS "/mesh.vert"), vk::ShaderStageFlagBits::eVertex)
+		.attach(readfile(IVY_SHADERS "/albedo.frag"), vk::ShaderStageFlagBits::eFragment);
 
 	littlevk::Pipeline ppl = littlevk::PipelineCompiler <Layout> (drc.device, drc.window, drc.dal)
 		.with_render_pass(rc.render_pass)
 		.with_shader_bundle(bundle)
-		.with_push_constant <RayFrame> (vk::ShaderStageFlagBits::eFragment);
+		.with_dsl_binding(0, 1, vk::DescriptorType::eCombinedImageSampler, vk::ShaderStageFlagBits::eFragment)
+		.with_push_constant <MVPConstants> (vk::ShaderStageFlagBits::eVertex);
+
+	// Default sampler
+	// TODO: sampler builder...
+	static constexpr vk::SamplerCreateInfo default_sampler_info {
+		vk::SamplerCreateFlags {},
+		vk::Filter::eLinear,
+		vk::Filter::eLinear,
+		vk::SamplerMipmapMode::eLinear,
+		vk::SamplerAddressMode::eRepeat,
+		vk::SamplerAddressMode::eRepeat,
+		vk::SamplerAddressMode::eRepeat,
+		0.0f,
+		vk::False,
+		1.0f,
+		vk::False,
+		vk::CompareOp::eAlways,
+		0.0f,
+		0.0f,
+		vk::BorderColor::eIntOpaqueBlack,
+		vk::False
+	};
+
+	vk::Sampler sampler = littlevk::sampler(drc.device, default_sampler_info).unwrap(drc.dal);
+
+	// Construct descriptor sets for each mesh
+	std::vector <vk::DescriptorSet> dsets;
+	for (const Material &material : biome.materials) {
+		// TODO: allocate all in a batch outside...
+		vk::DescriptorSet dset = drc.device.allocateDescriptorSets
+		(
+			vk::DescriptorSetAllocateInfo {
+				drc.descriptor_pool, ppl.dsl.value()
+			}
+		).front();
+			
+		vk::DescriptorImageInfo image_info {};
+
+		const auto &textures = material.textures;
+		if (textures.diffuse.size()) {
+			const littlevk::Image &image = dtc[textures.diffuse];
+
+			image_info  = vk::DescriptorImageInfo {
+				sampler, image.view,
+				vk::ImageLayout::eShaderReadOnlyOptimal
+			};
+		} else {
+			const littlevk::Image &image = dtc.scapegoat();
+
+			image_info  = vk::DescriptorImageInfo {
+				sampler, image.view,
+				vk::ImageLayout::eShaderReadOnlyOptimal
+			};
+		}
+			
+		vk::WriteDescriptorSet write {
+			dset,
+			0, 0, 1,
+			vk::DescriptorType::eCombinedImageSampler,
+			&image_info,
+			nullptr, nullptr
+		};
+
+		drc.device.updateDescriptorSets(write, nullptr);
+		dsets.push_back(dset);
+	}
 
 	// Rendering
 	size_t frame = 0;
@@ -262,13 +435,25 @@ int main()
 			begin_render_pass(drc, rc, cmd, op);
 
 			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
-	
-			RayFrame rayframe = camera.rayframe(camera_transform);
-			cmd.pushConstants <RayFrame> (ppl.layout, vk::ShaderStageFlagBits::eFragment, 0, rayframe);
-			cmd.bindVertexBuffers(0, { vm_screen_quad.vertices.buffer }, { 0 });
-			cmd.bindIndexBuffer(vm_screen_quad.triangles.buffer, 0, vk::IndexType::eUint32);
-			cmd.drawIndexed(vm_screen_quad.count, 1, 0, 0, 0);
 
+			MVPConstants mvp;
+			mvp.model = glm::mat4(1.0f);
+			mvp.proj = camera.perspective_matrix();
+			mvp.view = Camera::view_matrix(camera_transform);
+
+			cmd.pushConstants <MVPConstants> (ppl.layout, vk::ShaderStageFlagBits::eVertex, 0, mvp);
+
+			for (uint32_t i = 0; i < vgs.size(); i++) {
+				const auto &vg = vgs[i];
+				const auto &dset = dsets[i];
+
+				cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout, 0, dset, {});
+				cmd.bindVertexBuffers(0, { vg.vertices.buffer }, { 0 });
+				cmd.bindIndexBuffer(vg.triangles.buffer, 0, vk::IndexType::eUint32);
+				cmd.drawIndexed(vg.count, 1, 0, 0, 0);
+			}
+
+			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
 			cmd.endRenderPass();
 		}
 

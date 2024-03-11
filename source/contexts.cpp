@@ -2,33 +2,44 @@
 
 DeviceResourceContext DeviceResourceContext::from(const vk::PhysicalDevice &phdev, const std::vector <const char *> &extensions, const vk::PhysicalDeviceFeatures2KHR &features)
 {
-		DeviceResourceContext drc;
+	DeviceResourceContext drc;
 
-		// TODO: option for headless, null swapchain etc
-		drc.skeletonize(phdev, { 1000, 1000 }, "Vyne", extensions, features);
+	// TODO: option for headless, null swapchain etc
+	drc.skeletonize(phdev, { 1920, 1080 }, "IVY", extensions, features);
 
-		drc.phdev = phdev;
-		drc.memory_properties = phdev.getMemoryProperties();
-		drc.dal = new littlevk::Deallocator(drc.device);
-		drc.sync = littlevk::present_syncronization(drc.device, 2).unwrap(drc.dal);
+	drc.phdev = phdev;
+	drc.memory_properties = phdev.getMemoryProperties();
+	drc.dal = new littlevk::Deallocator(drc.device);
+	drc.sync = littlevk::present_syncronization(drc.device, 2).unwrap(drc.dal);
 
-		// Allocate command buffers
-		drc.command_pool = littlevk::command_pool
-		(
-			drc.device,
-			vk::CommandPoolCreateInfo {
-				vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-				littlevk::find_graphics_queue_family(phdev)
-			}
-		).unwrap(drc.dal);
+	// Allocate command buffers
+	drc.command_pool = littlevk::command_pool
+	(
+		drc.device,
+		vk::CommandPoolCreateInfo {
+			vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+			littlevk::find_graphics_queue_family(phdev)
+		}
+	).unwrap(drc.dal);
 
-		drc.command_buffers = drc.device.allocateCommandBuffers({
-			drc.command_pool,
-			vk::CommandBufferLevel::ePrimary, 2
-		});
+	drc.command_buffers = drc.device.allocateCommandBuffers({
+		drc.command_pool,
+		vk::CommandBufferLevel::ePrimary, 2
+	});
 
-		return drc;
-	}
+	// Allocate descriptor pool
+	vk::DescriptorPoolSize pool_size {
+		vk::DescriptorType::eCombinedImageSampler, 1 << 10
+	};
+
+	drc.descriptor_pool = littlevk::descriptor_pool(
+		drc.device, vk::DescriptorPoolCreateInfo {
+			{}, 1 << 10, pool_size
+		}
+	).unwrap(drc.dal);
+
+	return drc;
+}
 
 std::optional <std::pair <vk::CommandBuffer, littlevk::SurfaceOperation>> new_frame(DeviceResourceContext &drc, size_t frame)
 {

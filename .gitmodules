@@ -4,3 +4,6 @@
 [submodule "dependencies/littlevk"]
 	path = dependencies/littlevk
 	url = https://github.com/iveevi/littlevk.git
+[submodule "dependencies/stb"]
+	path = dependencies/stb
+	url = https://github.com/nothings/stb.git

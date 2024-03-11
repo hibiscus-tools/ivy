@@ -11,6 +11,7 @@ find_package(glslang REQUIRED)
 include_directories(include dependencies dependencies/glm dependencies/microlog)
 
 add_library(ivycore SHARED
+	source/biome.cpp
 	source/camera.cpp
 	source/contexts.cpp
 	source/mesh.cpp

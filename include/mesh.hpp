@@ -13,9 +13,7 @@ struct Mesh {
 
 	// Topology
 	std::vector <glm::uvec3> triangles;
-
-	// Loading meshes
-	static std::vector <Mesh> load(const std::filesystem::path &);
 };
 
+// TODO: (template) flags to choose attributes?
 std::vector <float> interleave_attributes(const Mesh &);
