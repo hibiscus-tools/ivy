@@ -5,22 +5,29 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
+
 #include <imgui/imgui.h>
 
 #include <littlevk/littlevk.hpp>
 #include <microlog/microlog.h>
 
+#include <oak/caches.hpp>
+#include <oak/camera.hpp>
+#include <oak/contexts.hpp>
+#include <oak/transform.hpp>
+
 #include "biome.hpp"
-#include "caches.hpp"
-#include "camera.hpp"
-#include "contexts.hpp"
-#include "transform.hpp"
 
 #ifndef IVY_ROOT
 #define IVY_ROOT ".."
 #endif
 
 #define IVY_SHADERS IVY_ROOT "/shaders"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb/stb_image_write.h>
 
 // TODO: util
 // Functions
@@ -34,11 +41,6 @@ std::string readfile(const std::string &path)
 
 	return buffer.str();
 }
-
-struct Pipeline {
-	vk::Pipeline pipeline;
-	vk::PipelineLayout layout;
-};
 
 struct MVPConstants {
 	glm::mat4 model;
@@ -250,7 +252,175 @@ int main()
 			dtc.load(textures.diffuse);
 	}
 
-	// Build the pipeline	
+	// Load the environment map and compute the spherical harmonics coefficients
+	const std::string environment = IVY_ROOT "/data/environments/crossroads.hdr";
+
+	dtc.load(environment);
+
+	const Texture &tex = dtc.host_textures[environment];
+
+	std::vector <glm::vec3> rgb = tex.as_rgb();
+
+	float dt_dp = glm::pi <float> ();
+	dt_dp = (2 * dt_dp * dt_dp)/rgb.size();
+
+	glm::vec3 vY0;
+	glm::vec3 vY1[3];
+	glm::vec3 vY2[5];
+
+	vY0 = glm::vec3(0.0f);
+	vY1[0] = vY1[1] = vY1[2] = glm::vec3(0.0f);
+	vY2[0] = vY2[1] = vY2[2] = vY2[3] = vY2[4] = glm::vec3(0.0f);
+
+	for (uint32_t i = 0; i < tex.width; i++) {
+		for (uint32_t j = 0; j < tex.height; j++) {
+			uint32_t index = i * tex.height + j;
+
+			// Convert to unit direction
+			float u = i/float(tex.width);
+			float v = j/float(tex.height);
+
+			float theta = u * glm::pi <float> ();
+			float phi = v * glm::two_pi <float> ();
+
+			float sin_theta = sin(theta);
+
+			glm::vec3 n {
+				sin_theta * cos(phi),
+				sin_theta * sin(phi),
+				cos(theta)
+			};
+
+			// Convolve with the spherical harmonics
+			float Y0 = 0.282095;
+			
+			float Y1[] = {
+				0.488603f * n.z,
+				0.488603f * n.x,
+				0.499603f * n.y
+			};
+
+			float Y2[] = {
+				0.315392f * (3 * n.z * n.z - 1),
+				1.092548f * n.x * n.z,
+				0.546274f * (n.x * n.x - n.y * n.y),
+				1.092548f * n.x * n.y,
+				1.092548f * n.y * n.z
+			};
+
+			const glm::vec3 &radiance = rgb[index];
+
+			vY0 += radiance * Y0 * sin_theta * dt_dp;
+			
+			vY1[0] += radiance * Y1[0] * sin_theta * dt_dp;
+			vY1[1] += radiance * Y1[1] * sin_theta * dt_dp;
+			vY1[2] += radiance * Y1[2] * sin_theta * dt_dp;
+			
+			vY2[0] += radiance * Y2[0] * sin_theta * dt_dp;
+			vY2[1] += radiance * Y2[1] * sin_theta * dt_dp;
+			vY2[2] += radiance * Y2[2] * sin_theta * dt_dp;
+			vY2[3] += radiance * Y2[3] * sin_theta * dt_dp;
+			vY2[4] += radiance * Y2[4] * sin_theta * dt_dp;
+		}
+	}
+
+	ulog_info("sh lighting", "vY0: %f, %f, %f\n", vY0.x, vY0.y, vY0.z);
+
+	constexpr float c1 = 0.429043f;
+	constexpr float c2 = 0.511664f;
+	constexpr float c3 = 0.743125f;
+	constexpr float c4 = 0.886227f;
+	constexpr float c5 = 0.247708f;
+
+	glm::mat4 M_red {
+		c1 * vY2[2].x, c1 * vY2[2].x, c1 * vY2[1].x, c2 * vY1[1].x,
+		c1 * vY2[2].x, -c1 * vY2[2].x, c1 * vY2[4].x, c2 * vY1[2].x,
+		c2 * vY2[1].x, c1 * vY2[4].x, c3 * vY2[0].x, c2 * vY1[0].x,
+		c2 * vY1[1].x, c2 * vY1[2].x, c2 * vY1[0].x, c4 * vY0.x - c5 * vY2[0].x
+	};
+
+	glm::mat4 M_green {
+		c1 * vY2[2].y, c1 * vY2[2].y, c1 * vY2[1].y, c2 * vY1[1].y,
+		c1 * vY2[2].y, -c1 * vY2[2].y, c1 * vY2[4].y, c2 * vY1[2].y,
+		c2 * vY2[1].y, c1 * vY2[4].y, c3 * vY2[0].y, c2 * vY1[0].y,
+		c2 * vY1[1].y, c2 * vY1[2].y, c2 * vY1[0].y, c4 * vY0.y - c5 * vY2[0].y
+	};
+
+	glm::mat4 M_blue {
+		c1 * vY2[2].z, c1 * vY2[2].z, c1 * vY2[1].z, c2 * vY1[1].z,
+		c1 * vY2[2].z, -c1 * vY2[2].z, c1 * vY2[4].z, c2 * vY1[2].z,
+		c2 * vY2[1].z, c1 * vY2[4].z, c3 * vY2[0].z, c2 * vY1[0].z,
+		c2 * vY1[1].z, c2 * vY1[2].z, c2 * vY1[0].z, c4 * vY0.z - c5 * vY2[0].z
+	};
+
+	ulog_info("sh lighting", "Mred: %s\n", glm::to_string(M_red).c_str());
+	ulog_info("sh lighting", "Mred: %s\n", glm::to_string(M_green).c_str());
+	ulog_info("sh lighting", "Mred: %s\n", glm::to_string(M_blue).c_str());
+
+	struct SHLighting {
+	    glm::mat4 red;
+	    glm::mat4 green;
+	    glm::mat4 blue;
+	};
+
+	SHLighting shl { .red = M_red, .green = M_green, .blue = M_blue };
+
+	std::vector <uint32_t> original;
+	std::vector <uint32_t> integrated;
+
+	original.resize(rgb.size());
+	integrated.resize(rgb.size());
+
+	auto rgb_to_hex = [](const glm::vec3 &color) -> uint32_t {
+		uint32_t r = color.x * 255.0f;
+		uint32_t g = color.y * 255.0f;
+		uint32_t b = color.z * 255.0f;
+		return ((r & 0xff) << 16)
+			| ((g & 0xff) << 8)
+			| ((b & 0xff))
+			| 0xff000000;
+	};
+
+	for (uint32_t i = 0; i < tex.width; i++) {
+		for (uint32_t j = 0; j < tex.height; j++) {
+			uint32_t index = i * tex.height + j;
+
+			const glm::vec3 &color = rgb[index];
+			original[index] = rgb_to_hex(color);
+
+			// Convert to unit direction
+			float u = i/float(tex.width);
+			float v = j/float(tex.height);
+
+			float theta = u * glm::pi <float> ();
+			float phi = v * glm::two_pi <float> ();
+
+			float sin_theta = sin(theta);
+
+			glm::vec3 n {
+				sin_theta * cos(phi),
+				sin_theta * sin(phi),
+				cos(theta)
+			};
+
+			glm::vec4 pn { n, 1.0f };
+			glm::vec3 ic {
+				glm::dot(M_red * pn, pn),
+				glm::dot(M_green * pn, pn),
+				glm::dot(M_blue * pn, pn),
+			};
+
+			ic = glm::clamp(ic, 0.0f, 1.0f);
+
+			integrated[index] = rgb_to_hex(ic);
+		}
+	}
+
+	stbi_flip_vertically_on_write(true);
+	stbi_write_png("original.png", tex.width, tex.height, 4, original.data(), sizeof(uint32_t) * tex.width);
+	stbi_write_png("integrated.png", tex.width, tex.height, 4, integrated.data(), sizeof(uint32_t) * tex.width);
+
+	// Build the pipeline
 	using Layout = littlevk::VertexLayout <glm::vec3, glm::vec3, glm::vec2>;
 
 	auto bundle = littlevk::ShaderStageBundle(drc.device, drc.dal)
@@ -368,7 +538,21 @@ int main()
 
 			imgui_begin();
 
-			if (ImGui::Begin("Wee")) {
+			std::function <void (Inhabitant)> recursive_note = [&](Inhabitant i) -> void {
+				if (i.children.empty())
+					return ImGui::Text("%s", i.identifier.c_str());
+
+				if (ImGui::TreeNode(i.identifier.c_str())) {
+					for (const Inhabitant &ic : i.children)
+						recursive_note(ic);
+					ImGui::TreePop();
+				}
+			};
+
+			if (ImGui::Begin("Scene tree")) {
+				for (const Inhabitant &i : biome.inhabitants)
+					recursive_note(i);
+
 				ImGui::End();
 			}
 
@@ -378,10 +562,7 @@ int main()
 		}
 
 		drc.end_frame(cmd, frame);
-
-		// NOTE: this part is optional for a differentiable renderer
 		drc.present_frame(op, frame);
-
 		frame = 1 - frame;
 	}
 }

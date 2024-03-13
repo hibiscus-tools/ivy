@@ -4,9 +4,9 @@
 #include <optional>
 #include <variant>
 
-#include "mesh.hpp"
-#include "material.hpp"
-#include "transform.hpp"
+#include <oak/mesh.hpp>
+#include <oak/material.hpp>
+#include <oak/transform.hpp>
 
 // Type traits
 template <typename T>

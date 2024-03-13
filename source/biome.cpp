@@ -12,7 +12,7 @@ static std::string translate_path(const std::filesystem::path &path, const std::
 	std::string normal = std::filesystem::weakly_canonical(path).string();
 	if (std::filesystem::exists(normal))
 		return normal;
-	
+
 	// Replace \ with /
 	std::string unixed = path.string();
 	std::replace(unixed.begin(), unixed.end(), '\\', '/');
@@ -30,7 +30,7 @@ static std::string translate_path(const std::filesystem::path &path, const std::
 
 	unixed = rpath.string();
 	std::replace(unixed.begin(), unixed.end(), '\\', '/');
-	
+
 	unixed = std::filesystem::weakly_canonical(unixed).string();
 	if (std::filesystem::exists(unixed))
 		return unixed;
@@ -40,7 +40,7 @@ static std::string translate_path(const std::filesystem::path &path, const std::
 }
 
 // Biome loading
-static auto assimp_process_mesh(aiMesh *m, const aiScene *scene, const std::string &dir)
+static Inhabitant assimp_process_mesh(aiMesh *m, const aiScene *scene, const std::string &dir)
 {
 	std::vector <glm::vec3> vertices;
 	std::vector <glm::vec3> normals;
@@ -91,6 +91,8 @@ static auto assimp_process_mesh(aiMesh *m, const aiScene *scene, const std::stri
 		});
 	}
 
+	ulog_info("load biome", "mesh name: %s\n", m->mName.C_Str());
+
 	// Process the material
 	Material material;
 
@@ -125,33 +127,31 @@ static auto assimp_process_mesh(aiMesh *m, const aiScene *scene, const std::stri
 	// Finally
 	Mesh mesh { vertices, normals, uvs, triangles };
 
-	return std::make_pair(mesh, material);
+	Inhabitant i = Geometry { mesh, material };
+	i.identifier = m->mName.C_Str();
+	return i;
 }
 
-static std::pair <std::vector <Mesh>, std::vector <Material>> assimp_process_node(aiNode *node, const aiScene *scene, const std::string &directory)
+static std::vector <Inhabitant> assimp_process_node(aiNode *node, const aiScene *scene, const std::string &directory)
 {
-	std::vector <Mesh> meshes;
-	std::vector <Material> materials;
+	std::vector <Inhabitant> inhabitants;
 
 	// Process all the node's meshes (if any)
 	for (uint32_t i = 0; i < node->mNumMeshes; i++) {
 		aiMesh *m = scene->mMeshes[node->mMeshes[i]];
-		
-		auto [mesh, material] = assimp_process_mesh(m, scene, directory);
 
-		meshes.push_back(mesh);
-		materials.push_back(material);
+		Inhabitant ib = assimp_process_mesh(m, scene, directory);
+		inhabitants.push_back(ib);
 	}
 
 	// Recusively process all the node's children
 	for (uint32_t i = 0; i < node->mNumChildren; i++) {
-		auto [ glist, mlist ]  = assimp_process_node(node->mChildren[i], scene, directory);
+		auto ibs = assimp_process_node(node->mChildren[i], scene, directory);
 
-		meshes.insert(meshes.begin(), glist.begin(), glist.end());
-		materials.insert(materials.begin(), mlist.begin(), mlist.end());
+		inhabitants.insert(inhabitants.end(), ibs.begin(), ibs.end());
 	}
 
-	return { meshes, materials };
+	return inhabitants;
 }
 
 Biome Biome::load(const std::filesystem::path &path)
@@ -174,16 +174,7 @@ Biome Biome::load(const std::filesystem::path &path)
 		return {};
 	}
 
-	auto [meshes, materials] = assimp_process_node(scene->mRootNode, scene, path.parent_path());
-	
-	// return Biome { meshes, materials };
-
-	std::vector <Inhabitant> children;
-	for (uint32_t i = 0; i < meshes.size(); i++) {
-		Geometry g { meshes[i], materials[i] };
-		Transformable t { g };
-		children.push_back(t);
-	}
+	auto children = assimp_process_node(scene->mRootNode, scene, path.parent_path());
 
 	Inhabitant i = Anchor();
 	i.identifier = "Loaded scene";
