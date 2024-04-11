@@ -17,7 +17,10 @@ include_directories(include
 	dependencies/microlog
 	dependencies/imgui)
 
-add_executable(ivy source/main.cpp source/biome.cpp)
+add_executable(ivy
+	source/main.cpp
+	source/biome.cpp
+	source/shlighting.cpp)
 
 add_definitions("-DIVY_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 

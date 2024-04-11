@@ -22,6 +22,7 @@ struct Geometry {
 
 	Mesh mesh;
 	Material material;
+	bool visible;
 };
 
 // Blank node

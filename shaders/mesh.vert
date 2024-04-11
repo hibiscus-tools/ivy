@@ -18,7 +18,7 @@ void main()
 {
 	gl_Position = proj * view * model * vec4(position, 1.0);
 	gl_Position.y = -gl_Position.y;
-	gl_Position.z = (gl_Position.z + gl_Position.w) / 2.0;
+//	gl_Position.z = (gl_Position.z + gl_Position.w) / 2.0;
 
 	out_normal = vec3(model * vec4(normal, 0));
 	out_position = position;
