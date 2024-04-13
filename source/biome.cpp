@@ -157,20 +157,16 @@ static std::vector <Inhabitant> assimp_process_node(aiNode *node, const aiScene 
 Biome Biome::load(const std::filesystem::path &path)
 {
 	Assimp::Importer importer;
-        ulog_assert
-	(
-	 	std::filesystem::exists(path),
-		"loader",
-                "file \"%s\" does not exist\n", path.c_str()
-	);
+        ulog_assert(std::filesystem::exists(path),
+		__FUNCTION__ , "file \"%s\" does not exist\n", path.c_str());
 
         // Read scene
 	const aiScene *scene;
-	scene = importer.ReadFile(path, aiProcess_GenNormals | aiProcess_Triangulate);
+	scene = importer.ReadFile(path, aiProcess_Triangulate);
 
 	// Check if the scene was loaded
 	if ((!scene | scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode) {
-		ulog_error("loader", "ASSIMP error: \"%s\"\n", importer.GetErrorString());
+		ulog_error(__FUNCTION__ , "ASSIMP error: \"%s\"\n", importer.GetErrorString());
 		return {};
 	}
 

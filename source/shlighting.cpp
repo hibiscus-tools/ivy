@@ -19,8 +19,8 @@ SHLighting SHLighting::from(const Texture &tex)
 	vY1[0] = vY1[1] = vY1[2] = glm::vec3(0.0f);
 	vY2[0] = vY2[1] = vY2[2] = vY2[3] = vY2[4] = glm::vec3(0.0f);
 
-	for (uint32_t i = 0; i < tex.width; i++) {
-		for (uint32_t j = 0; j < tex.height; j++) {
+	for (int i = 0; i < tex.width; i++) {
+		for (int j = 0; j < tex.height; j++) {
 			uint32_t index = i * tex.height + j;
 
 			// Convert to unit direction

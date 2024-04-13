@@ -32,15 +32,11 @@ void main()
 	if (albedo.a < 0.5)
 		discard;
 
-	// TODO: transform the normals
-	vec3 dU = dFdx(position);
-	vec3 dV = dFdyFine(position);
-	vec3 N = normalize(cross(dU, dV));
-
-	vec4 N1 = vec4(N, 1);
-	float r = dot(N1, Mred * N1);
-	float g = dot(N1, Mgreen * N1);
-	float b = dot(N1, Mblue * N1);
+	// TODO: a mix between interpolated and numerical normals? for auto sharpness
+	vec4 N = vec4(normal, 1);
+	float r = dot(N, Mred * N);
+	float g = dot(N, Mgreen * N);
+	float b = dot(N, Mblue * N);
 	vec3 C = vec3(r, g, b) * albedo.xyz;
 
 	fragment = vec4(aces(C), 1.0);

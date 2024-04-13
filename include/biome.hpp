@@ -40,10 +40,10 @@ struct Transformable : transformable_base {
 
 	// Get the concrete component
 	template <transformable_component T>
-	std::optional <std::reference_wrapper <const T>> grab() const {
+	std::optional <std::reference_wrapper <T>> grab() {
 		if (std::holds_alternative <T> (*this)) {
-			const auto &v = std::get <T> (*this);
-			std::reference_wrapper <const T> w = std::cref(v);
+			auto &v = std::get <T> (*this);
+			std::reference_wrapper <T> w = std::ref(v);
 			return w;
 		}
 
@@ -62,13 +62,13 @@ struct Inhabitant : inhabitant_base {
 
 	// Get general component
 	template <biome_component T>
-	std::optional <std::reference_wrapper <const T>> grab() const {
+	std::optional <std::reference_wrapper <T>> grab() {
 		if constexpr (transformable_component <T>) {
 			if (!std::holds_alternative <Transformable> (*this))
 				return std::nullopt;
 
 			// Transformable
-			const Transformable &t = std::get <Transformable> (*this);
+			Transformable &t = std::get <Transformable> (*this);
 			return t.grab <T> ();
 		} else {
 			if (std::holds_alternative <T> (*this)) {
@@ -81,13 +81,13 @@ struct Inhabitant : inhabitant_base {
 
 	// Get a list of all components
 	template <biome_component T>
-	std::vector <std::reference_wrapper <const T>> grab_all() const {
-		std::vector <std::reference_wrapper <const T>> all;
+	std::vector <std::reference_wrapper <T>> grab_all() {
+		std::vector <std::reference_wrapper <T>> all;
 		if (auto v = grab <T> ())
 			all.push_back(v.value());
 
-		for (const Inhabitant &i : children) {
-			const auto &vs = i.grab_all <T> ();
+		for (Inhabitant &i : children) {
+			auto vs = i.grab_all <T> ();
 			all.insert(all.end(), vs.begin(), vs.end());
 		}
 
@@ -101,10 +101,10 @@ struct Biome {
 
 	// Get a list of all components
 	template <biome_component T>
-	std::vector <std::reference_wrapper <const T>> grab_all() const {
-		std::vector <std::reference_wrapper <const T>> all;
-		for (const Inhabitant &i : inhabitants) {
-			const auto &vs = i.grab_all <T> ();
+	std::vector <std::reference_wrapper <T>> grab_all() {
+		std::vector <std::reference_wrapper <T>> all;
+		for (Inhabitant &i : inhabitants) {
+			auto vs = i.grab_all <T> ();
 			all.insert(all.end(), vs.begin(), vs.end());
 		}
 

@@ -13,19 +13,22 @@ add_subdirectory(dependencies/oak)
 include_directories(include
 	dependencies
 	dependencies/oak/include
+	dependencies/oak/dependencies
 	dependencies/glm
 	dependencies/microlog
 	dependencies/imgui)
 
-add_executable(ivy
-	source/main.cpp
+add_executable(features
+	source/targets/features.cpp
 	source/biome.cpp
 	source/shlighting.cpp)
 
+target_compile_options(features PRIVATE -Wall)
+
 add_definitions("-DIVY_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
-target_link_libraries(ivy
-    oak
+target_link_libraries(features
+	oak
 	assimp
 	glfw
 	SPIRV
