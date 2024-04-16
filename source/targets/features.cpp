@@ -21,6 +21,7 @@
 
 #include "biome.hpp"
 #include "shlighting.hpp"
+#include "prebuilt.hpp"
 
 #ifndef IVY_ROOT
 #define IVY_ROOT ".."
@@ -41,7 +42,7 @@ void handle_key_input(GLFWwindow *const win, Transform &camera_transform)
 {
 	static float last_time = 0.0f;
 
-	constexpr float speed = 250.0f;
+	constexpr float speed = 500.0f;
 
 	float delta = speed * float(glfwGetTime() - last_time);
 	last_time = glfwGetTime();
@@ -149,6 +150,20 @@ VulkanGeometry VulkanGeometry::from(const DeviceResourceContext &drc, const G &g
 	return vm;
 }
 
+struct VulkanMaterial {
+	alignas(16) glm::vec3 albedo;
+	alignas(16) glm::vec3 specular;
+	int has_albedo_texture;
+
+	static VulkanMaterial from(const Material &material) {
+		return VulkanMaterial {
+			material.diffuse,
+			material.specular,
+			!material.textures.diffuse.empty()
+		};
+	}
+};
+
 int main()
 {
 	using enum vk::DescriptorType;
@@ -157,14 +172,15 @@ int main()
 
 	using standalone::readfile;
 
-	static const std::vector <const char *> extensions {
+	// Device extensions
+	static const std::vector <const char *> EXTENSIONS {
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 		VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME
 	};
 
 	// Load physical device
 	auto predicate = [](vk::PhysicalDevice phdev) {
-		return littlevk::physical_device_able(phdev, extensions);
+		return littlevk::physical_device_able(phdev, EXTENSIONS);
 	};
 
 	vk::PhysicalDevice phdev = littlevk::pick_physical_device(predicate);
@@ -184,19 +200,13 @@ int main()
 	phdev.getFeatures2(&features);
 
 	// Configure a device resource context
-	DeviceResourceContext drc = DeviceResourceContext::from(phdev, extensions, features);
+	DeviceResourceContext drc = DeviceResourceContext::from(phdev, EXTENSIONS, features);
 
 	// Texture cache
 	DeviceTextureCache dtc = DeviceTextureCache::from(drc);
 
-	// Specific rendering context
-	vk::RenderPass render_pass;
-	std::vector <vk::Framebuffer> framebuffers;
-
-	littlevk::Image depth_buffer;
-
 	// Configuring the render pass
-	render_pass = littlevk::RenderPassAssembler(drc.device, drc.dal)
+	vk::RenderPass render_pass = littlevk::RenderPassAssembler(drc.device, drc.dal)
 		.add_attachment(littlevk::default_color_attachment(drc.swapchain.format))
 		.add_attachment(littlevk::default_depth_attachment())
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
@@ -212,17 +222,19 @@ int main()
 			vk::PipelineStageFlagBits::eFragmentShader);
 
 	// Create the depth buffer
-	depth_buffer = bind(drc.device, drc.memory_properties, drc.dal)
+	littlevk::Image depth_buffer = bind(drc.device, drc.memory_properties, drc.dal)
 		.image(drc.window->extent,
 			vk::Format::eD32Sfloat,
 			vk::ImageUsageFlagBits::eDepthStencilAttachment
 				| vk::ImageUsageFlagBits::eInputAttachment,
 			vk::ImageAspectFlagBits::eDepth);
 
+	// Create the framebuffers
 	littlevk::FramebufferGenerator generator(drc.device, render_pass, drc.window->extent, drc.dal);
 	for (const vk::ImageView &view : drc.swapchain.image_views)
 		generator.add(view, depth_buffer.view);
-	framebuffers = generator.unpack();
+
+	std::vector <vk::Framebuffer> framebuffers = generator.unpack();
 
 	// ImGui context
 	imgui_context_from(drc, render_pass);
@@ -238,23 +250,29 @@ int main()
 	glfwSetCursorPosCallback(drc.window->handle, cursor_callback);
 
 	// Load the scene
-	Biome biome = Biome::load(IVY_ROOT "/data/sponza/sponza.obj");
+	Biome &biome = Biome::load(IVY_ROOT "/data/sponza/sponza.obj");
 
-	auto geometries = biome.grab_all <Geometry> ();
+	Mesh box = ivy::box({ 0, 10, 0 }, { 10, 10, 10 });
+	InhabitantRef inh = biome.new_inhabitant();
+	inh->add_component <Transform> ();
+	inh->add_component <Geometry> (box, Material::null(), true);
+
+	auto geometries = biome.geometries;
 
 	// TODO: shared mesh resource manager, used by rendering layer
 	// TODO: dynamically loading, start the renderer and populate the scene...
+	std::unordered_map <uint32_t, VulkanGeometry> vg_map;
+
 	std::vector <VulkanGeometry> vgs;
-	for (Geometry &g : geometries) {
+	for (size_t i = 0; i < geometries.size(); i++) {
+		auto &g = geometries[i];
 		g.mesh = deduplicate(g.mesh);
 		g.mesh.normals = smooth_normals(g.mesh);
-		vgs.emplace_back(VulkanGeometry::from(drc, g.mesh));
-	}
+		vg_map[i] = VulkanGeometry::from(drc, g.mesh);
 
-	// TODO: gather all textures, then load them in parallel (thread pool)
-	for (const Geometry &g : geometries) {
+		// TODO: gather all textures, then load them in parallel (thread pool)
 		const auto &textures = g.material.textures;
-		if (textures.diffuse.size())
+		if (!textures.diffuse.empty())
 			dtc.load(textures.diffuse);
 	}
 
@@ -262,29 +280,24 @@ int main()
 	const std::string environment = IVY_ROOT "/data/environments/crossroads.hdr";
 
 	dtc.load(environment);
-
 	const Texture &tex = dtc.host_textures[environment];
 
 	SHLighting shl = SHLighting::from(tex);
 
 	// Upload the lighting information to the device
-	littlevk::Buffer uniform_shl= littlevk::buffer
-	(
-		drc.device,
-		std::array <SHLighting, 1> { shl },
-		vk::BufferUsageFlagBits::eUniformBuffer,
-		drc.memory_properties
-	).unwrap(drc.dal);
+	littlevk::Buffer uniform_shl = bind(drc.device, drc.memory_properties, drc.dal)
+		.buffer(&shl, sizeof(shl), vk::BufferUsageFlagBits::eUniformBuffer);
 
-	// TODO: mesh interleave with vertexlayout specializations....
+	// TODO: mesh interleave with vertex layout specializations....
 
 	// Build the pipeline
 	constexpr auto rendering_vlayout = littlevk::VertexLayout <glm::vec3, glm::vec3, glm::vec2> ();
 	constexpr auto environment_vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
 
-	constexpr auto rendering_dslbs = std::array <vk::DescriptorSetLayoutBinding, 2> {{
+	constexpr auto rendering_dslbs = std::array <vk::DescriptorSetLayoutBinding, 3> {{
 		{ 0, eCombinedImageSampler, 1, eFragment },
-		{ 1, eUniformBuffer, 1, eFragment }
+		{ 1, eUniformBuffer, 1, eFragment },
+		{ 2, eUniformBuffer, 1, eFragment }
 	}};
 
 	constexpr auto environment_dslbs = std::array <vk::DescriptorSetLayoutBinding, 2> {{
@@ -321,11 +334,12 @@ int main()
 	vk::Sampler sampler = littlevk::SamplerAssembler(drc.device, drc.dal);
 
 	// Construct descriptor sets for each mesh
-	std::vector <vk::DescriptorSet> dsets;
-	for (const Geometry &g : geometries) {
+	std::unordered_map <uint32_t, vk::DescriptorSet> dset_map;
+	for (size_t i = 0; i < geometries.size(); i++) {
+		const auto &g = geometries[i];
 		// TODO: allocate all in a batch outside...
 		vk::DescriptorSet dset = littlevk::bind(drc.device, drc.descriptor_pool)
-			.allocateDescriptorSets(*render_ppl.dsl).front();
+			.allocate_descriptor_sets(*render_ppl.dsl).front();
 
 		// TODO: stream/batchify
 		const littlevk::Image &image = [&](const std::string &diffuse) {
@@ -337,28 +351,32 @@ int main()
 			return dtc.device_textures.begin()->second;
 		} (g.material.textures.diffuse);
 
-		// TODO: lazy? do it upon destruction or manually...
-		littlevk::descriptor_set_update(drc.device, dset, rendering_dslbs, {
-			littlevk::DescriptorImageElementInfo(sampler, image.view, eShaderReadOnlyOptimal),
-			littlevk::DescriptorBufferElementInfo(uniform_shl.buffer, 0, uniform_shl.device_size())
-		});
+		// Export the material as well
+		auto vmat = VulkanMaterial::from(g.material);
 
-		dsets.push_back(dset);
+		littlevk::Buffer material_buffer = littlevk::bind(drc.device, drc.memory_properties, drc.dal)
+			.buffer(&vmat, sizeof(vmat), vk::BufferUsageFlagBits::eUniformBuffer);
+
+		littlevk::bind(drc.device, dset, rendering_dslbs)
+			.update(0, 0, sampler, image.view, eShaderReadOnlyOptimal)
+			.update(1, 0, *uniform_shl, 0, sizeof(SHLighting))
+			.update(2, 0, *material_buffer, 0, sizeof(VulkanMaterial))
+			.finalize();
+
+		dset_map[i] = dset;
 	}
 
 	// Another descriptor set for the environment subpass
 	vk::DescriptorSet environment_dset = littlevk::bind(drc.device, drc.descriptor_pool)
-		.allocateDescriptorSets(*environment_ppl.dsl).front();
+		.allocate_descriptor_sets(*environment_ppl.dsl).front();
 
 	dtc.upload(environment);
 	const littlevk::Image &environment_map = dtc.device_textures[environment];
 
-	littlevk::descriptor_set_update(drc.device, environment_dset, environment_dslbs, {
-		littlevk::DescriptorImageElementInfo(sampler, depth_buffer.view, eDepthReadOnlyOptimal),
-		littlevk::DescriptorImageElementInfo(sampler, environment_map.view, eShaderReadOnlyOptimal)
-	});
-
-	// TODO: .buffer(...), .image(...), ...updater(...)
+	littlevk::bind(drc.device, environment_dset, environment_dslbs)
+		.update(0, 0, sampler, depth_buffer.view, eDepthReadOnlyOptimal)
+		.update(1, 0, sampler, environment_map.view, eShaderReadOnlyOptimal)
+		.finalize();
 
 	// Rendering
 	size_t frame = 0;
@@ -369,85 +387,93 @@ int main()
 		// Moving the camera
 		handle_key_input(drc.window->handle, camera_transform);
 
+		// Begin the new frame
 		auto [cmd, op] = drc.new_frame(frame).value();
 
 		// Render things
+		const auto &rpbi = littlevk::default_rp_begin_info <2>
+			(render_pass, framebuffers[op.index], drc.window)
+			.clear_color(0, std::array <float, 4> { 1.0f, 1.0f, 1.0f, 1.0f });
+
+		cmd.beginRenderPass(rpbi, vk::SubpassContents::eInline);
+
+		float t = glfwGetTime();
+		glm::vec3 position = { 20 * sin(t), 10 * cos(t), 20 * cos(t/2) };
+		inh->transform->position = position;
+
 		{
-			const auto &rpbi = littlevk::default_rp_begin_info <2>
-			        (render_pass, framebuffers[op.index], drc.window)
-				.clear_color(0, std::array <float, 4> { 1.0f, 1.0f, 1.0f, 1.0f });
-
-			cmd.beginRenderPass(rpbi, vk::SubpassContents::eInline);
-
 			auto ppl = render_ppl;
 
 			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
 
 			MVPConstants mvp {};
-			mvp.model = glm::mat4(1.0f);
 			mvp.proj = camera.perspective_matrix();
 			mvp.view = Camera::view_matrix(camera_transform);
 
-			cmd.pushConstants <MVPConstants> (ppl.layout, eVertex, 0, mvp);
+			for (auto [transform, g] : biome.grab_all <Transform, Geometry> ()) {
+				uint32_t index = g.hash();
+				const auto &vg = vg_map[index];
+				const auto &dset = dset_map[index];
 
-			for (uint32_t i = 0; i < vgs.size(); i++) {
-				const auto &vg = vgs[i];
-				const auto &dset = dsets[i];
+				mvp.model = transform->matrix();
 
+				cmd.pushConstants <MVPConstants> (ppl.layout, eVertex, 0, mvp);
 				cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout, 0, dset, {});
-				// TODO: bind(cmd, vg).draw(instance, fireindex, offset...)
 				cmd.bindVertexBuffers(0, { vg.vertices.buffer }, { 0 });
 				cmd.bindIndexBuffer(vg.triangles.buffer, 0, vk::IndexType::eUint32);
 				cmd.drawIndexed(vg.count, 1, 0, 0, 0);
 			}
+		}
+
+		{
+			imgui_begin();
+
+			std::function <void (const Inhabitant &inh)> recursive_note = [&](const Inhabitant &inh) -> void {
+				if (inh.children.empty())
+					return ImGui::Text("%s", inh.identifier.c_str());
+
+				if (ImGui::TreeNode(inh.identifier.c_str())) {
+					for (const InhabitantRef &ic : inh.children)
+						recursive_note(*ic);
+					ImGui::TreePop();
+				}
+			};
+
+			if (ImGui::Begin("Scene tree")) {
+				for (const auto &inh : biome.inhabitants) {
+					if (inh.parent)
+						continue;
+					recursive_note(inh);
+				}
+
+				ImGui::End();
+			}
+
+			imgui_end(cmd);
+		}
+
+		// Second subpass, for the envirnonment map
+		cmd.nextSubpass(vk::SubpassContents::eInline);
+
+		{
+			auto ppl = environment_ppl;
 
 			cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
 
-			{
-				imgui_begin();
+			RayFrame rayframe = camera.rayframe(camera_transform);
 
-				std::function <void (Inhabitant)> recursive_note = [&](Inhabitant i) -> void {
-					if (i.children.empty())
-						return ImGui::Text("%s", i.identifier.c_str());
+			cmd.pushConstants <RayFrame> (ppl.layout, eFragment, 0, rayframe);
 
-					if (ImGui::TreeNode(i.identifier.c_str())) {
-						for (const Inhabitant &ic : i.children)
-							recursive_note(ic);
-						ImGui::TreePop();
-					}
-				};
-
-				if (ImGui::Begin("Scene tree")) {
-					for (const Inhabitant &i : biome.inhabitants)
-						recursive_note(i);
-
-					ImGui::End();
-				}
-
-				imgui_end(cmd);
-			}
-
-			// Second subpass, for the envirnonment map
-			cmd.nextSubpass(vk::SubpassContents::eInline);
-
-			{
-				auto ppl = environment_ppl;
-
-				cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
-
-				RayFrame frame = camera.rayframe(camera_transform);
-
-				cmd.pushConstants <RayFrame> (ppl.layout, eFragment, 0, frame);
-
-				cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout, 0, environment_dset, {});
-				cmd.bindVertexBuffers(0, { screen_vk.vertices.buffer }, { 0 });
-				cmd.bindIndexBuffer(screen_vk.triangles.buffer, 0, vk::IndexType::eUint32);
-				cmd.drawIndexed(screen_vk.count, 1, 0, 0, 0);
-			}
-
-			cmd.endRenderPass();
+			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout, 0, environment_dset, {});
+			cmd.bindVertexBuffers(0, { screen_vk.vertices.buffer }, { 0 });
+			cmd.bindIndexBuffer(screen_vk.triangles.buffer, 0, vk::IndexType::eUint32);
+			cmd.drawIndexed(screen_vk.count, 1, 0, 0, 0);
 		}
 
+		// Finish rendering
+		cmd.endRenderPass();
+
+		// Complete and presen the frame
 		drc.end_frame(cmd, frame);
 		drc.present_frame(op, frame);
 		frame = 1 - frame;

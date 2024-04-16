@@ -21,6 +21,7 @@ include_directories(include
 add_executable(features
 	source/targets/features.cpp
 	source/biome.cpp
+	source/prebuilt.cpp
 	source/shlighting.cpp)
 
 target_compile_options(features PRIVATE -Wall)
