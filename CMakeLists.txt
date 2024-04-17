@@ -13,16 +13,19 @@ add_subdirectory(dependencies/oak)
 include_directories(include
 	dependencies
 	dependencies/glm
-	dependencies/microlog
 	dependencies/oak/dependencies
 	dependencies/oak/dependencies/imgui
 	dependencies/oak/include)
 
 add_executable(features
-	source/targets/features.cpp
 	source/biome.cpp
+	source/cursor_dispatcher.cpp
+	source/exec/globals.cpp
+	source/exec/user_interface.cpp
+	source/exec/viewport.cpp
 	source/prebuilt.cpp
-	source/shlighting.cpp)
+	source/shlighting.cpp
+	source/targets/features.cpp)
 
 target_compile_options(features PRIVATE -Wall)
 

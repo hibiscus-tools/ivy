@@ -9,6 +9,8 @@
 #include <oak/material.hpp>
 #include <oak/transform.hpp>
 
+#include <microlog/microlog.h>
+
 #include "components.hpp"
 
 // Forward declarations
