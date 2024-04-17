@@ -12,11 +12,11 @@ add_subdirectory(dependencies/oak)
 
 include_directories(include
 	dependencies
-	dependencies/oak/include
-	dependencies/oak/dependencies
 	dependencies/glm
 	dependencies/microlog
-	dependencies/imgui)
+	dependencies/oak/dependencies
+	dependencies/oak/dependencies/imgui
+	dependencies/oak/include)
 
 add_executable(features
 	source/targets/features.cpp

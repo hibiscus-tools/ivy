@@ -173,6 +173,12 @@ InhabitantRef Biome::new_inhabitant()
 	return { inhabitants, size };
 }
 
+Biome &Biome::blank()
+{
+	Biome::active.emplace_back();
+	return Biome::active.back();
+}
+
 Biome &Biome::load(const std::filesystem::path &path)
 {
 	Assimp::Importer importer;

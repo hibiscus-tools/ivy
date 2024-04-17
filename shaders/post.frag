@@ -27,7 +27,7 @@ void main()
 	float theta = PI - acos(n.y);
 	vec2 euv = vec2(phi, theta)/vec2(2 * PI, PI);
 	vec3 env = texture(environment_texture, euv).xyz;
-	fragment = vec4(env, 0);
+	fragment = vec4(env, 1);
 
 	// TODO: some tone mapping here later...
 }

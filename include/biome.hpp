@@ -9,20 +9,11 @@
 #include <oak/material.hpp>
 #include <oak/transform.hpp>
 
+#include "components.hpp"
+
 // Forward declarations
 struct Biome;
 struct Inhabitant;
-
-// Components
-
-// Transform; already defined from oak
-
-// Geometry; any surface to be rendered
-struct Geometry {
-	Mesh mesh;
-	Material material;
-	bool visible; // TODO: base struct for renderables
-};
 
 // TODO: components header
 // Defines the client interface for arbitrary ivy objects; by default exposes nothing
@@ -230,10 +221,32 @@ struct Inhabitant {
 		}
 	}
 
-//	// Adding components
-//	template <typename T, typename ... Args>
-//	requires std::is_constructible_v <T, Args...>
-//	void add_component(const Args & ...);
+	template <typename T, typename ... Args>
+	std::optional <std::tuple <ComponentRef <T>, ComponentRef <Args>...>> grab() const {
+		if constexpr (sizeof...(Args) == 0) {
+			if constexpr (std::is_same <T, Transform> ::value) {
+				if (transform)
+					return std::optional(std::make_tuple(transform));
+			} else if constexpr (std::is_same <T, Geometry> ::value) {
+				if (geometry)
+					return std::optional(std::make_tuple(geometry));
+			} else {
+				static_assert(false, "Unknown component type");
+			}
+
+			return std::nullopt;
+		} else {
+			auto prev = grab <Args...> ();
+			if (!prev)
+				return std::nullopt;
+
+			auto current = grab <T> ();
+			if (!current)
+				return std::nullopt;
+
+			return std::tuple_cat(*current, *prev);
+		}
+	}
 };
 
 // Dependency specializations
@@ -293,8 +306,22 @@ struct Biome {
 		return tuples;
 	}
 
+	template <typename ... Args>
+	auto grab_all() const {
+		std::vector <std::tuple <ComponentRef <Args>...>> tuples;
+		for (auto &inh : inhabitants) {
+			// TODO: has instead? faster?
+			auto tuple = inh.grab <Args...> ();
+			if (tuple)
+				tuples.push_back(*tuple);
+		}
+
+		return tuples;
+	}
+
 	// Loading from a file
 	// TODO: standard scene description vs in house format
+	static Biome &blank();
 	static Biome &load(const std::filesystem::path &);
 
 	// Fixed memory location of all actively loaded biomes
