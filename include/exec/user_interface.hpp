@@ -1,5 +1,7 @@
 #pragma once
 
+#include <imgui/imgui.h>
+
 #include "cursor_dispatcher.hpp"
 #include "globals.hpp"
 #include "viewport.hpp"
@@ -17,6 +19,9 @@ struct UserInterface {
 		std::vector <vk::Framebuffer> framebuffers;
 		vk::Extent2D extent;
 	} vk;
+
+	// Fonts
+	ImFont *primary_font;
 
 	// GLFW input handlers
 	std::unique_ptr <CursorDispatcher> cursor_dispatcher_ref;

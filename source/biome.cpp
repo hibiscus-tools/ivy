@@ -6,6 +6,8 @@
 
 #include "biome.hpp"
 
+namespace ivy {
+
 // Translating paths
 static std::string translate_path(const std::filesystem::path &path, const std::string &directory)
 {
@@ -138,34 +140,22 @@ static std::vector <mesh_result> assimp_process_node(aiNode *node, const aiScene
 	return results;
 }
 
-// TODO: another file
-concrete_ref_base <Inhabitant> ::concrete_ref_base(Inhabitant &i)
-		: source(i),
-		biome(i.biome),
-		parent(i.parent),
-		children(i.children),
-		identifier(i.identifier),
-		transform(i.transform),
-		geometry(i.geometry) {}
-
-concrete_ref_base <Geometry> ::concrete_ref_base(Geometry &g)
-		: mesh(g.mesh), material(g.material) {}
-
 Inhabitant::Inhabitant(Biome &biome_, const std::string &identifier_)
 		: biome(biome_),
-		parent(std::ref(biome_.inhabitants)),
 		identifier(identifier_),
+		parent(std::ref(biome_.inhabitants)),
 		transform(std::ref(biome_.transforms)),
-		geometry(std::ref(biome_.geometries)) {}
+		geometry(std::ref(biome_.geometries)),
+		collider(std::ref(biome_.colliders)) {}
 
 // TODO: move
-void link(InhabitantRef &parent, InhabitantRef &child)
+void link(ComponentRef <Inhabitant> &parent, ComponentRef <Inhabitant> &child)
 {
 	parent->children.push_back(child);
 	child->parent = parent;
 }
 
-InhabitantRef Biome::new_inhabitant()
+ComponentRef <Inhabitant> Biome::new_inhabitant()
 {
 	uint32_t size = inhabitants.size();
 	Inhabitant inh(*this, "inbitant" + std::to_string(size));
@@ -201,12 +191,12 @@ Biome &Biome::load(const std::filesystem::path &path)
 	Biome::active.emplace_back();
 	Biome &b = Biome::active.back();
 
-	InhabitantRef root = b.new_inhabitant();
+	ComponentRef <Inhabitant> root = b.new_inhabitant();
 	if (scene->mName.length)
 		root->identifier = scene->mName.C_Str();
 
 	for (const auto &[name, mesh, material] : results) {
-		InhabitantRef added = b.new_inhabitant();
+		ComponentRef <Inhabitant> added = b.new_inhabitant();
 		added->add_component <Transform> ();
 		added->add_component <Geometry> (mesh, material, true);
 		added->identifier = name;
@@ -217,3 +207,5 @@ Biome &Biome::load(const std::filesystem::path &path)
 }
 
 std::list <Biome> Biome::active;
+
+}

@@ -8,11 +8,13 @@ layout (push_constant) uniform PushConstants {
 	mat4 model;
 	mat4 view;
 	mat4 proj;
+	vec3 camera;
 };
 
 layout (location = 0) out vec3 out_position;
 layout (location = 1) out vec3 out_normal;
 layout (location = 2) out vec2 out_uv;
+layout (location = 3) out vec3 out_camera;
 
 void main()
 {
@@ -22,4 +24,5 @@ void main()
 	out_normal = vec3(model * vec4(normal, 0));
 	out_position = position;
 	out_uv = uv;
+	out_camera = camera;
 }

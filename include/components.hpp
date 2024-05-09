@@ -4,9 +4,12 @@
 #include <oak/mesh.hpp>
 #include <oak/material.hpp>
 
-// TODO: namesapace ivy
+#include "collider.hpp"
+
+namespace ivy {
 
 // Transform; already defined from oak
+using Transform = Transform;
 
 // Geometry; any surface to be rendered
 struct Geometry {
@@ -15,3 +18,7 @@ struct Geometry {
 	bool visible; // TODO: base struct for renderables
 };
 
+// Collider; collision shape for physics
+using Collider = physics::Collider;
+
+}

@@ -32,6 +32,7 @@ struct Viewport {
 	// Pipelines
 	struct {
 		littlevk::Pipeline raster;
+		littlevk::Pipeline sdf;
 		littlevk::Pipeline environment;
 	} pipelines;
 
@@ -39,6 +40,8 @@ struct Viewport {
 	struct {
 		littlevk::Buffer shl;
 		VulkanGeometry screen;
+
+		vk::DescriptorSet sdf_descriptor;
 		vk::DescriptorSet environment_descriptor;
 	} scrap;
 
@@ -84,6 +87,7 @@ struct Viewport {
 	void prepare();
 	void prepare_render_pass();
 	void prepare_raster_pipeline();
+	void prepare_sdf_pipeline();
 	void prepare_environment_pipeline();
 
 	// Caching functions

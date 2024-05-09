@@ -11,6 +11,8 @@ layout (push_constant) uniform PushConstants {
 	vec3 lower_left;
 	vec3 horizontal;
 	vec3 vertical;
+	float near;
+	float far;
 };
 
 layout (binding = 1) uniform sampler2D environment_texture;
@@ -28,6 +30,10 @@ void main()
 	vec2 euv = vec2(phi, theta)/vec2(2 * PI, PI);
 	vec3 env = texture(environment_texture, euv).xyz;
 	fragment = vec4(env, 1);
+
+	/* float d = subpassLoad(depth).x;
+	float nd = near * far / (far + d * (near - far));
+	fragment = vec4(vec3(nd/1000), 1); */
 
 	// TODO: some tone mapping here later...
 }

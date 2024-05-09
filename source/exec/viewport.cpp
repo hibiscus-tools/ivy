@@ -24,6 +24,12 @@ struct MVPConstants {
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
+	alignas(16) glm::vec3 camera;
+};
+
+struct RayFrameExtra : RayFrame {
+	float near;
+	float far;
 };
 
 // Pipeline configurations
@@ -31,6 +37,10 @@ static constexpr auto rendering_dslbs = std::array <vk::DescriptorSetLayoutBindi
 	{ 0, eCombinedImageSampler, 1, eFragment },
 	{ 1, eUniformBuffer, 1, eFragment },
 	{ 2, eUniformBuffer, 1, eFragment }
+}};
+
+static constexpr auto sdf_dslbs = std::array <vk::DescriptorSetLayoutBinding, 1> {{
+	{ 0, eInputAttachment, 1, eFragment },
 }};
 
 static constexpr auto environment_dslbs = std::array <vk::DescriptorSetLayoutBinding, 2> {{
@@ -156,7 +166,11 @@ void Viewport::resize(const vk::Extent2D &extent)
 
 	vk.framebuffers = generator.unpack();
 
-	// Bind the depth buffer
+	// Bind the depth buffer wherever necessary
+	littlevk::bind(vrb.device, scrap.sdf_descriptor, sdf_dslbs)
+		.update(0, 0, sampler, vk.depth.view, eGeneral)
+		.finalize();
+
 	littlevk::bind(vrb.device, scrap.environment_descriptor, environment_dslbs)
 		.update(0, 0, sampler, vk.depth.view, eDepthReadOnlyOptimal)
 		.finalize();
@@ -172,6 +186,7 @@ void Viewport::prepare()
 
 	prepare_render_pass();
 	prepare_raster_pipeline();
+	prepare_sdf_pipeline();
 	prepare_environment_pipeline();
 
 	// Load the environment map
@@ -179,6 +194,7 @@ void Viewport::prepare()
 	const std::string environment = IVY_ROOT "/data/environments/crossroads.hdr";
 
 	// Environment subpass resources
+	// TODO: put into that function...
 	vk::DescriptorSet environment_dset = littlevk::bind(vrb.device, vrb.descriptor_pool)
 		.allocate_descriptor_sets(*pipelines.environment.dsl).front();
 
@@ -199,15 +215,27 @@ void Viewport::prepare_render_pass()
 	vk.render_pass = littlevk::RenderPassAssembler(vrb.device, vrb.dal)
 		.add_attachment(littlevk::default_color_attachment(vrb.swapchain.format))
 		.add_attachment(littlevk::default_depth_attachment())
+		// (A) Primary rasterization
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
 			.color_attachment(0, eColorAttachmentOptimal)
 			.depth_attachment(1, eDepthStencilAttachmentOptimal)
 			.done()
+		// (B) Raymarching signed distance fields
+		.add_subpass(vk::PipelineBindPoint::eGraphics)
+			.input_attachment(1, eGeneral) // TODO:: read and write
+			.color_attachment(0, eColorAttachmentOptimal)
+			.depth_attachment(1, eGeneral)
+			.done()
+		// (C) Environment mapping
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
 			.input_attachment(1, eDepthReadOnlyOptimal)
 			.color_attachment(0, eColorAttachmentOptimal)
 			.done()
+		// (C) -> (B) -> (A)
 		.add_dependency(0, 1,
+			vk::PipelineStageFlagBits::eFragmentShader,
+			vk::PipelineStageFlagBits::eFragmentShader)
+		.add_dependency(1, 2,
 			vk::PipelineStageFlagBits::eFragmentShader,
 			vk::PipelineStageFlagBits::eFragmentShader);
 }
@@ -240,38 +268,58 @@ void Viewport::prepare_raster_pipeline()
 		.with_push_constant <MVPConstants> (eVertex);
 }
 
+void Viewport::prepare_sdf_pipeline()
+{
+	// Pipeline
+	constexpr auto vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
+
+	auto bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
+		.attach(readfile(IVY_SHADERS "/screen.vert"), eVertex)
+		.attach(readfile(IVY_SHADERS "/sdf.frag"), eFragment);
+
+	pipelines.sdf = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
+		.with_render_pass(vk.render_pass, 1)
+		.with_vertex_layout(vlayout)
+		.with_shader_bundle(bundle)
+		.alpha_blending(true)
+		.with_dsl_bindings(sdf_dslbs)
+		.with_push_constant <RayFrameExtra> (eFragment);
+
+	// Allocate the corresponding descriptor set
+	scrap.sdf_descriptor = littlevk::bind(vrb.device, vrb.descriptor_pool)
+		.allocate_descriptor_sets(*pipelines.sdf.dsl).front();
+}
+
 void Viewport::prepare_environment_pipeline()
 {
 	// Allocate the geometry for the screen now itself
+	// TODO: generate inside the v shader itself
 	auto screen = Polygon::screen();
 	scrap.screen = VulkanGeometry::from(vrb, screen);
 
 	// Pipeline
-	constexpr auto environment_vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
+	constexpr auto vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
 
-	auto environment_bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
+	auto bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
 		.attach(readfile(IVY_SHADERS "/screen.vert"), eVertex)
 		.attach(readfile(IVY_SHADERS "/post.frag"), eFragment);
 
 	pipelines.environment = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
-		.with_render_pass(vk.render_pass, 1)
-		.with_vertex_layout(environment_vlayout)
-		.with_shader_bundle(environment_bundle)
+		.with_render_pass(vk.render_pass, 2)
+		.with_vertex_layout(vlayout)
+		.with_shader_bundle(bundle)
 		.with_dsl_bindings(environment_dslbs)
-		.with_push_constant <RayFrame> (eFragment);
+		.with_push_constant <RayFrameExtra> (eFragment);
 }
 
 void Viewport::cache_geometry_properties(ComponentRef <Geometry> &g)
 {
 	uint32_t i = g.hash();
-//		ulog_info(__FUNCTION__, "Caching geometry with hash: %d\n", i);
+	// ulog_info(__FUNCTION__, "Caching geometry with hash: %d\n", i);
 
 	g->mesh = deduplicate(g->mesh);
 	g->mesh.normals = smooth_normals(g->mesh);
 	caches.geometry[i] = VulkanGeometry::from(vrb, g->mesh);
-
-	// TODO: gather all textures, then load them in parallel (thread pool)
-	const auto &textures = g->material.textures;
 
 	vk::DescriptorSet dset = littlevk::bind(vrb.device, vrb.descriptor_pool)
 		.allocate_descriptor_sets(*pipelines.raster.dsl).front();
@@ -329,6 +377,7 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 		MVPConstants mvp {};
 		mvp.proj = camera.perspective_matrix();
 		mvp.view = Camera::view_matrix(camera_transform);
+		mvp.camera = camera_transform.position;
 
 		for (auto [transform, g] : biome.grab_all <Transform, Geometry> ()) {
 			if (caches.geometry.count(g.hash()) == 0)
@@ -352,6 +401,35 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 		}
 	}
 
+	// Render the signed distance fields
+	// TODO: separate rendering stages
+	cmd.nextSubpass(vk::SubpassContents::eInline);
+
+	{
+		auto ppl = pipelines.sdf;
+
+		cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
+
+		RayFrame rayframe = camera.rayframe(camera_transform);
+		RayFrameExtra rayframe_extra;
+
+		rayframe_extra.origin = rayframe.origin;
+		rayframe_extra.lower_left = rayframe.lower_left;
+		rayframe_extra.horizontal = rayframe.horizontal;
+		rayframe_extra.vertical = rayframe.vertical;
+		rayframe_extra.near = camera.near;
+		rayframe_extra.far = camera.far;
+
+		cmd.pushConstants <RayFrameExtra> (ppl.layout, eFragment, 0, rayframe_extra);
+
+		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout,
+			0, scrap.sdf_descriptor, {});
+
+		cmd.bindVertexBuffers(0, { scrap.screen.vertices.buffer }, { 0 });
+		cmd.bindIndexBuffer(scrap.screen.triangles.buffer, 0, vk::IndexType::eUint32);
+		cmd.drawIndexed(scrap.screen.count, 1, 0, 0, 0);
+	}
+
 	// Render the environment
 	cmd.nextSubpass(vk::SubpassContents::eInline);
 
@@ -360,9 +438,21 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 
 		cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, ppl.handle);
 
-		RayFrame rayframe = camera.rayframe(camera_transform);
+		// RayFrame rayframe = camera.rayframe(camera_transform);
+		//
+		// cmd.pushConstants <RayFrame> (ppl.layout, eFragment, 0, rayframe);
 
-		cmd.pushConstants <RayFrame> (ppl.layout, eFragment, 0, rayframe);
+		RayFrame rayframe = camera.rayframe(camera_transform);
+		RayFrameExtra rayframe_extra;
+
+		rayframe_extra.origin = rayframe.origin;
+		rayframe_extra.lower_left = rayframe.lower_left;
+		rayframe_extra.horizontal = rayframe.horizontal;
+		rayframe_extra.vertical = rayframe.vertical;
+		rayframe_extra.near = camera.near;
+		rayframe_extra.far = camera.far;
+
+		cmd.pushConstants <RayFrameExtra> (ppl.layout, eFragment, 0, rayframe_extra);
 
 		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout,
 			0, scrap.environment_descriptor, {});
@@ -404,8 +494,13 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 	);
 }
 
-std::unique_ptr <Viewport> Viewport::from(Biome &biome, const VulkanResourceBase &vrb,
-		std::unique_ptr <CursorDispatcher> &cursor_dispatcher, const vk::Extent2D &extent)
+std::unique_ptr <Viewport> Viewport::from
+(
+	Biome &biome,
+	const VulkanResourceBase &vrb,
+	std::unique_ptr <CursorDispatcher> &cursor_dispatcher,
+	const vk::Extent2D &extent
+)
 {
 	// Allocate the viewport
 	auto viewport = std::make_unique <Viewport> (Viewport {

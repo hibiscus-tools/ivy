@@ -1,32 +1,57 @@
+#include <variant>
+
 #include <imgui/imgui.h>
 
 #include "exec/user_interface.hpp"
 
 namespace ivy::exec {
 
-static void biome_tree(const Biome &biome)
+std::optional <uint32_t> biome_tree(Biome &biome)
 {
-	// TODO: define method
-	std::function <void (const Inhabitant &inh)> recursive_note = [&](const Inhabitant &inh) -> void {
-		if (inh.children.empty())
-			return ImGui::Text("%s", inh.identifier.c_str());
+	static std::optional <uint32_t> selected_id;
 
-		if (ImGui::TreeNode(inh.identifier.c_str())) {
-			for (const InhabitantRef &ic : inh.children)
-				recursive_note(*ic);
+	// TODO: detect escape?
+
+	// TODO: viepwort method
+	// TODO: define method
+	const std::function <void (const ComponentRef <Inhabitant> &)> recursive_note = [&](const ComponentRef <Inhabitant> &inh) -> void {
+		if (inh->children.empty()) {
+			if (ImGui::Selectable(inh->identifier.c_str(), selected_id == inh.hash())) {
+				printf("Selected inhabitant: %s\n", inh->identifier.c_str());
+				selected_id = inh.hash();
+			}
+
+			return;
+		}
+
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+		if (selected_id == inh.hash())
+			flags |= ImGuiTreeNodeFlags_Selected;
+
+		bool open = ImGui::TreeNodeEx(inh->identifier.c_str(), flags);
+		if (ImGui::IsItemClicked()) {
+			printf("Selected inhabitant: %s\n", inh->identifier.c_str());
+			selected_id = inh.hash();
+		}
+
+		if (open) {
+			for (const auto &ic : inh->children)
+				recursive_note(ic);
 			ImGui::TreePop();
 		}
 	};
 
 	if (ImGui::Begin("Scene tree")) {
-		for (const auto &inh : biome.inhabitants) {
-			if (inh.parent)
+		for (size_t i = 0; i < biome.inhabitants.size(); i++) {
+			if (biome.inhabitants[i].parent.has_value())
 				continue;
-			recursive_note(inh);
+			recursive_note(ComponentRef <Inhabitant> (biome.inhabitants, i));
 		}
 
 		ImGui::End();
 	}
+
+	return selected_id;
 }
 
 void UserInterface::resize(const vk::Extent2D &extent)
@@ -63,6 +88,8 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 
 	ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
 
+	ImGui::PushFont(primary_font);
+
 	// Top bar
 	if (ImGui::BeginMainMenuBar()) {
 		ImGui::MenuItem("File");
@@ -70,8 +97,10 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 		ImGui::EndMainMenuBar();
 	}
 
+	// TODO: check from the viewport as well, which caches every time a click happens
+	std::optional <uint32_t> selected_id;
 	if (engine.biome) {
-		biome_tree(*engine.biome);
+		selected_id = biome_tree(*engine.biome);
 
 		if (!viewport_ref) {
 			viewport_ref = Viewport::from(*engine.biome, engine.vrb,
@@ -98,8 +127,77 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 
 	// TODO: properties panel
 	if (ImGui::Begin("Inhabitant Properties")) {
+		if (selected_id) {
+			Biome &biome = (*engine.biome);
+			auto &inh = biome.inhabitants[*selected_id];
+			ImGui::Text("%s", inh.identifier.c_str());
+
+			// Go through each component
+			if (inh.transform.has_value()) {
+				// auto t = inh.transform;
+				// auto p = t->position;
+				// auto r = t->rotation;
+				// auto s = t->scale;
+
+				ImGui::Separator();
+//				if (ImGui::TreeNodeEx("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+				ImGui::Text("Transform");
+//					ImGui::Text("Position");
+//					ImGui::SameLine();
+//					ImGui::Text("%.2f %.2f %.2f", p.x, p.y, p.z);
+//
+//					ImGui::Text("Rotation");
+//					ImGui::SameLine();
+//					ImGui::Text("%.2f %.2f %.2f", r.x, r.y, r.z);
+//
+//					ImGui::Text("Scale");
+//					ImGui::SameLine();
+//					ImGui::Text("%.2f %.2f %.2f", s.x, s.y, s.z);
+				// if (ImGui::BeginChild("f")) {
+				// 	ImGui::Text("Scale");
+				// 	ImGui::Text("Scale");
+				// 	ImGui::Text("Scale");
+				// 	ImGui::EndChild();
+				// }
+
+				// ImGui::SameLine();
+				// if (ImGui::BeginChild("g")) {
+				// 	ImGui::Text("Scale");
+				// 	ImGui::EndChild();
+				// }
+
+//				ImGui::TreePop();
+			}
+
+			if (inh.geometry.has_value()) {
+				ImGui::Separator();
+				ImGui::Text("Geometry");
+
+				Mesh mesh = inh.geometry->mesh;
+				Material material = inh.geometry->material;
+				ImGui::Text("Mesh: %lu vertices and %lu triangles", mesh.positions.size(), mesh.triangles.size());
+
+				ImGui::Text("Materials");
+			}
+
+			if (inh.collider.has_value()) {
+				ImGui::Separator();
+				ImGui::Text("Collider");
+
+				auto shape = inh.collider->shape;
+
+				if (std::holds_alternative <Box> (shape))
+					ImGui::Text("Shape: Box");
+
+				if (std::holds_alternative <Sphere> (shape))
+					ImGui::Text("Shape: Sphere");
+			}
+		}
+
 		ImGui::End();
 	}
+
+	ImGui::PopFont();
 
 	imgui_end(cmd);
 
@@ -107,7 +205,7 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 	cmd.endRenderPass();
 
 	// Generate the viewport rendering
-	if (viewport_ref) {
+	if (viewport_ref && viewport_size.width > 0 && viewport_size.height > 0) {
 		viewport_ref->resize(viewport_size);
 		viewport_ref->render(cmd, op);
 	}
@@ -141,6 +239,10 @@ UserInterface UserInterface::from(Globals &engine)
 	};
 
 	ui.resize(engine.vrb.window->extent);
+
+	// Configure the font
+	ui.primary_font = io.Fonts->AddFontFromFileTTF(IVY_ROOT "/data/fonts/Tajawal-Medium.ttf", 16);
+
 	return ui;
 }
 
