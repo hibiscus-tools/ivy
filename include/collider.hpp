@@ -9,7 +9,7 @@
 
 namespace ivy::physics {
 
-using ColliderShape = std::variant <Sphere, Box>;
+using ColliderShape = std::variant <sdf::Sphere, sdf::Box>;
 
 struct Collider {
 	std::reference_wrapper <Transform> transform;

@@ -186,10 +186,10 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 
 				auto shape = inh.collider->shape;
 
-				if (std::holds_alternative <Box> (shape))
+				if (std::holds_alternative <sdf::Box> (shape))
 					ImGui::Text("Shape: Box");
 
-				if (std::holds_alternative <Sphere> (shape))
+				if (std::holds_alternative <sdf::Sphere> (shape))
 					ImGui::Text("Shape: Sphere");
 			}
 		}

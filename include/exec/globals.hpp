@@ -23,4 +23,6 @@ struct Globals {
 	static Globals from();
 };
 
+VulkanResourceBase prepare_vulkan_resource_base();
+
 }

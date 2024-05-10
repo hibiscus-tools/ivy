@@ -2,7 +2,7 @@
 
 namespace ivy::exec {
 
-static VulkanResourceBase prepare_vulkan_resource_base()
+VulkanResourceBase prepare_vulkan_resource_base()
 {
 	// Device extensions
 	static const std::vector <const char *> EXTENSIONS {

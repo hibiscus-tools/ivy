@@ -17,9 +17,9 @@ int main()
 //	engine.biome = Biome::blank();
 	engine.biome = ivy::Biome::load(IVY_ROOT "/data/sponza/sponza.obj");
 
-	Mesh box = ivy::box({ 0, 10, 0 }, { 10, 10, 10 });
+	auto box = ivy::box({ 0, 10, 0 }, { 10, 10, 10 });
 
-	ivy::Sphere sphere = ivy::Sphere({ 0, 10, 0 }, 100);
+	auto sphere = ivy::sdf::Sphere({ 0, 10, 0 }, 100);
 
 	ivy::ComponentRef <ivy::Inhabitant> inh = engine.active_biome().new_inhabitant();
 
