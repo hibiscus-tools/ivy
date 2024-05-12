@@ -12,7 +12,7 @@ include_directories(include
 	dependencies/imgui
 	dependencies/glm)
 
-set(IMGUI_SOURCES
+add_library(ivy-interface SHARED
 	dependencies/imgui/imgui.cpp
 	dependencies/imgui/imgui_draw.cpp
 	dependencies/imgui/imgui_widgets.cpp
@@ -21,7 +21,8 @@ set(IMGUI_SOURCES
 	dependencies/imgui/backends/imgui_impl_glfw.cpp
 	dependencies/imgui/backends/imgui_impl_vulkan.cpp)
 
-set(IVY_SOURCES source/biome.cpp source/cursor_dispatcher.cpp
+add_library(ivy-core SHARED
+	source/biome.cpp source/cursor_dispatcher.cpp
 	source/exec/globals.cpp source/exec/user_interface.cpp
 	source/exec/viewport.cpp source/prebuilt.cpp source/sdf.cpp
 	source/shlighting.cpp source/core/camera.cpp source/core/contexts.cpp
@@ -30,14 +31,14 @@ set(IVY_SOURCES source/biome.cpp source/cursor_dispatcher.cpp
 
 # TODO: target object
 
-add_executable(features ${IVY_SOURCES} ${IMGUI_SOURCES} source/targets/features.cpp)
-add_executable(sdf ${IVY_SOURCES} ${IMGUI_SOURCES} source/targets/sdf.cpp)
+add_executable(features source/targets/features.cpp)
+add_executable(sdf source/targets/sdf.cpp)
 
 add_compile_options(-Wall)
 
 add_definitions("-DIVY_ROOT=\"${CMAKE_SOURCE_DIR}\"")
 
-set(IVY_LIBRARIES fmt assimp glfw SPIRV glslang::glslang
+set(IVY_LIBRARIES ivy-core ivy-interface fmt assimp glfw SPIRV glslang::glslang
 	glslang::glslang-default-resource-limits Vulkan::Vulkan)
 
 target_link_libraries(features ${IVY_LIBRARIES})
