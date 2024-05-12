@@ -4,10 +4,9 @@
 
 #include <glm/gtc/quaternion.hpp>
 
-#include <oak/polygon.hpp>
-
 #include <microlog/microlog.h>
 
+#include "core/polygon.hpp"
 #include "exec/viewport.hpp"
 #include "paths.hpp"
 #include "shlighting.hpp"

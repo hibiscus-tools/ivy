@@ -4,8 +4,8 @@
 
 #include <littlevk/littlevk.hpp>
 
-#include <oak/contexts.hpp>
-#include <oak/material.hpp>
+#include "core/contexts.hpp"
+#include "core/material.hpp"
 
 // Vulkan ports of rendering structures
 struct VulkanGeometry {

@@ -4,6 +4,9 @@
 [submodule "dependencies/stb"]
 	path = dependencies/stb
 	url = https://github.com/nothings/stb.git
-[submodule "dependencies/oak"]
-	path = dependencies/oak
-	url = git@github.com:hibiscus-tools/oak.git
+[submodule "dependencies/imgui"]
+	path = dependencies/imgui
+	url = https://github.com/ocornut/imgui
+[submodule "dependencies/littlevk"]
+	path = dependencies/littlevk
+	url = git@github.com:iveevi/littlevk.git

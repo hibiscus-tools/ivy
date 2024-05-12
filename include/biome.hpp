@@ -4,13 +4,12 @@
 #include <list>
 #include <optional>
 
-#include <oak/mesh.hpp>
-#include <oak/material.hpp>
-#include <oak/transform.hpp>
-
 #include <microlog/microlog.h>
 
 #include "components.hpp"
+#include "core/mesh.hpp"
+#include "core/material.hpp"
+#include "core/transform.hpp"
 
 namespace ivy {
 

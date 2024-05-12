@@ -11,15 +11,13 @@
 
 #include <microlog/microlog.h>
 
-#include <oak/contexts.hpp>
-#include <oak/polygon.hpp>
-#include <oak/camera.hpp>
-#include <oak/transform.hpp>
-#include <vulkan/vulkan_enums.hpp>
-
+#include "core/camera.hpp"
+#include "core/contexts.hpp"
+#include "core/polygon.hpp"
+#include "core/transform.hpp"
+#include "exec/globals.hpp"
 #include "paths.hpp"
 #include "vkport.hpp"
-#include "exec/globals.hpp"
 
 using standalone::readfile;
 

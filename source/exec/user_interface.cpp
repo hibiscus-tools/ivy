@@ -88,7 +88,7 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 
 	ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
 
-	ImGui::PushFont(primary_font);
+	// ImGui::PushFont(primary_font);
 
 	// Top bar
 	if (ImGui::BeginMainMenuBar()) {
@@ -197,7 +197,7 @@ void UserInterface::draw(const vk::CommandBuffer &cmd, const littlevk::SurfaceOp
 		ImGui::End();
 	}
 
-	ImGui::PopFont();
+	// ImGui::PopFont();
 
 	imgui_end(cmd);
 

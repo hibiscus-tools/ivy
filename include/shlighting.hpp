@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-#include <oak/texture.hpp>
+#include "core/texture.hpp"
 
 struct SHLighting {
 	glm::mat4 red;

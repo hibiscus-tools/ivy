@@ -1,14 +1,13 @@
 #pragma once
 
-#include <oak/transform.hpp>
-#include <oak/mesh.hpp>
-#include <oak/material.hpp>
-
 #include "collider.hpp"
+#include "core/transform.hpp"
+#include "core/mesh.hpp"
+#include "core/material.hpp"
 
 namespace ivy {
 
-// Transform; already defined from oak
+// Transform; already defined from core
 using Transform = Transform;
 
 // Geometry; any surface to be rendered

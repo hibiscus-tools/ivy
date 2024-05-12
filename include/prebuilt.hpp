@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-#include <oak/mesh.hpp>
+#include "core/mesh.hpp"
 
 namespace ivy {
 
