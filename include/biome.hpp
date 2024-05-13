@@ -91,7 +91,8 @@ struct Inhabitant {
 			} else if constexpr (std::is_same <T, Geometry> ::value) {
 				return geometry.has_value();
 			} else {
-				static_assert(false, "Unknown component type");
+				throw "fdsf";
+				// static_assert(false, "Unknown component type");
 			}
 
 			return false;
@@ -111,7 +112,8 @@ struct Inhabitant {
 				if (geometry.has_value())
 					return std::optional(std::make_tuple(geometry));
 			} else {
-				static_assert(false, "Unknown component type");
+				throw "fdsf";
+				// static_assert(false, "Unknown component type");
 			}
 
 			return std::nullopt;
@@ -196,7 +198,6 @@ struct Biome {
 };
 
 template <typename T, typename ... Args>
-// requires std::is_constructible_v <T, Args...>
 void Inhabitant::add_component(Args ...args)
 {
 	dependency_translation <T> ::check(*this);
@@ -216,7 +217,7 @@ void Inhabitant::add_component(Args ...args)
 		b.transforms.emplace_back(args...);
 		transform = { std::ref(b.transforms), size };
 	} else {
-		static_assert(false, "Unsupported component type");
+		throw "fdsf";
 	}
 }
 

@@ -21,6 +21,11 @@ struct VulkanResourceBase : littlevk::Skeleton {
 	littlevk::SurfaceOperation present_frame(const littlevk::SurfaceOperation &, size_t);
 	bool valid_window() const;
 
+	bool destroy() override {
+		delete dal;
+		return littlevk::Skeleton::destroy();
+	}
+
 	static VulkanResourceBase from(const vk::PhysicalDevice &, const std::vector <const char *> &, const vk::PhysicalDeviceFeatures2KHR &);
 };
 
@@ -29,3 +34,5 @@ void imgui_context_from(const VulkanResourceBase &, const vk::RenderPass &);
 
 void imgui_begin();
 void imgui_end(const vk::CommandBuffer &);
+
+// TODO: move prepare to here...

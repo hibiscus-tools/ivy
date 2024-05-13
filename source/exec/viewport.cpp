@@ -1,6 +1,6 @@
-#define LITTLEVK_GLM_TRANSLATOR
-
 #include <imgui/backends/imgui_impl_vulkan.h>
+
+#include <littlevk/littlevk.hpp>
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -12,9 +12,9 @@
 #include "shlighting.hpp"
 
 // Import names
-using enum vk::DescriptorType;
-using enum vk::ShaderStageFlagBits;
-using enum vk::ImageLayout;
+// using enum vk::DescriptorType;
+// using enum vk::ShaderStageFlagBits;
+// using enum vk::ImageLayout;
 
 using standalone::readfile;
 
@@ -33,18 +33,18 @@ struct RayFrameExtra : RayFrame {
 
 // Pipeline configurations
 static constexpr auto rendering_dslbs = std::array <vk::DescriptorSetLayoutBinding, 3> {{
-	{ 0, eCombinedImageSampler, 1, eFragment },
-	{ 1, eUniformBuffer, 1, eFragment },
-	{ 2, eUniformBuffer, 1, eFragment }
+	{ 0, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment },
+	{ 1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment },
+	{ 2, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment }
 }};
 
 static constexpr auto sdf_dslbs = std::array <vk::DescriptorSetLayoutBinding, 1> {{
-	{ 0, eInputAttachment, 1, eFragment },
+	{ 0, vk::DescriptorType::eInputAttachment, 1, vk::ShaderStageFlagBits::eFragment },
 }};
 
 static constexpr auto environment_dslbs = std::array <vk::DescriptorSetLayoutBinding, 2> {{
-	{ 0, eInputAttachment, 1, eFragment },
-	{ 1, eCombinedImageSampler, 1, eFragment }
+	{ 0, vk::DescriptorType::eInputAttachment, 1, vk::ShaderStageFlagBits::eFragment },
+	{ 1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment }
 }};
 
 namespace ivy::exec {
@@ -167,11 +167,11 @@ void Viewport::resize(const vk::Extent2D &extent)
 
 	// Bind the depth buffer wherever necessary
 	littlevk::bind(vrb.device, scrap.sdf_descriptor, sdf_dslbs)
-		.update(0, 0, sampler, vk.depth.view, eGeneral)
+		.update(0, 0, sampler, vk.depth.view, vk::ImageLayout::eGeneral)
 		.finalize();
 
 	littlevk::bind(vrb.device, scrap.environment_descriptor, environment_dslbs)
-		.update(0, 0, sampler, vk.depth.view, eDepthReadOnlyOptimal)
+		.update(0, 0, sampler, vk.depth.view, vk::ImageLayout::eDepthReadOnlyOptimal)
 		.finalize();
 
 	// Export to ImGui
@@ -202,7 +202,7 @@ void Viewport::prepare()
 	const littlevk::Image &environment_map = dtc.device_textures[environment];
 
 	littlevk::bind(vrb.device, environment_dset, environment_dslbs)
-		.update(1, 0, sampler, environment_map.view, eShaderReadOnlyOptimal)
+		.update(1, 0, sampler, environment_map.view, vk::ImageLayout::eShaderReadOnlyOptimal)
 		.finalize();
 
 	scrap.environment_descriptor = environment_dset;
@@ -216,19 +216,19 @@ void Viewport::prepare_render_pass()
 		.add_attachment(littlevk::default_depth_attachment())
 		// (A) Primary rasterization
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
-			.color_attachment(0, eColorAttachmentOptimal)
-			.depth_attachment(1, eDepthStencilAttachmentOptimal)
+			.color_attachment(0, vk::ImageLayout::eColorAttachmentOptimal)
+			.depth_attachment(1, vk::ImageLayout::eDepthStencilAttachmentOptimal)
 			.done()
 		// (B) Raymarching signed distance fields
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
-			.input_attachment(1, eGeneral) // TODO:: read and write
-			.color_attachment(0, eColorAttachmentOptimal)
-			.depth_attachment(1, eGeneral)
+			.input_attachment(1, vk::ImageLayout::eGeneral) // TODO:: read and write
+			.color_attachment(0, vk::ImageLayout::eColorAttachmentOptimal)
+			.depth_attachment(1, vk::ImageLayout::eGeneral)
 			.done()
 		// (C) Environment mapping
 		.add_subpass(vk::PipelineBindPoint::eGraphics)
-			.input_attachment(1, eDepthReadOnlyOptimal)
-			.color_attachment(0, eColorAttachmentOptimal)
+			.input_attachment(1, vk::ImageLayout::eDepthReadOnlyOptimal)
+			.color_attachment(0, vk::ImageLayout::eColorAttachmentOptimal)
 			.done()
 		// (C) -> (B) -> (A)
 		.add_dependency(0, 1,
@@ -253,36 +253,36 @@ void Viewport::prepare_raster_pipeline()
 		.buffer(&shl, sizeof(shl), vk::BufferUsageFlagBits::eUniformBuffer);
 
 	// Pipeline
-	constexpr auto raster_layout = littlevk::VertexLayout <glm::vec3, glm::vec3, glm::vec2> ();
+	constexpr auto raster_layout = littlevk::VertexLayout <littlevk::rgb32f, littlevk::rgb32f, littlevk::rg32f> ();
 
 	auto raster_bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
-		.attach(readfile(IVY_SHADERS "/mesh.vert"), eVertex)
-		.attach(readfile(IVY_SHADERS "/environment.frag"), eFragment);
+		.attach(readfile(IVY_SHADERS "/mesh.vert"), vk::ShaderStageFlagBits::eVertex)
+		.attach(readfile(IVY_SHADERS "/environment.frag"), vk::ShaderStageFlagBits::eFragment);
 
-	pipelines.raster = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
+	pipelines.raster = littlevk::PipelineAssembler <littlevk::eGraphics> (vrb.device, vrb.window, vrb.dal)
 		.with_render_pass(vk.render_pass, 0)
 		.with_vertex_layout(raster_layout)
 		.with_shader_bundle(raster_bundle)
 		.with_dsl_bindings(rendering_dslbs)
-		.with_push_constant <MVPConstants> (eVertex);
+		.with_push_constant <MVPConstants> (vk::ShaderStageFlagBits::eVertex);
 }
 
 void Viewport::prepare_sdf_pipeline()
 {
 	// Pipeline
-	constexpr auto vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
+	constexpr auto vlayout = littlevk::VertexLayout <littlevk::rg32f, littlevk::rg32f> ();
 
 	auto bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
-		.attach(readfile(IVY_SHADERS "/screen.vert"), eVertex)
-		.attach(readfile(IVY_SHADERS "/sdf.frag"), eFragment);
+		.attach(readfile(IVY_SHADERS "/screen.vert"), vk::ShaderStageFlagBits::eVertex)
+		.attach(readfile(IVY_SHADERS "/sdf.frag"), vk::ShaderStageFlagBits::eFragment);
 
-	pipelines.sdf = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
+	pipelines.sdf = littlevk::PipelineAssembler <littlevk::eGraphics> (vrb.device, vrb.window, vrb.dal)
 		.with_render_pass(vk.render_pass, 1)
 		.with_vertex_layout(vlayout)
 		.with_shader_bundle(bundle)
 		.alpha_blending(true)
 		.with_dsl_bindings(sdf_dslbs)
-		.with_push_constant <RayFrameExtra> (eFragment);
+		.with_push_constant <RayFrameExtra> (vk::ShaderStageFlagBits::eFragment);
 
 	// Allocate the corresponding descriptor set
 	scrap.sdf_descriptor = littlevk::bind(vrb.device, vrb.descriptor_pool)
@@ -297,18 +297,18 @@ void Viewport::prepare_environment_pipeline()
 	scrap.screen = VulkanGeometry::from(vrb, screen);
 
 	// Pipeline
-	constexpr auto vlayout = littlevk::VertexLayout <glm::vec2, glm::vec2> ();
+	constexpr auto vlayout = littlevk::VertexLayout <littlevk::rg32f, littlevk::rg32f> ();
 
 	auto bundle = littlevk::ShaderStageBundle(vrb.device, vrb.dal)
-		.attach(readfile(IVY_SHADERS "/screen.vert"), eVertex)
-		.attach(readfile(IVY_SHADERS "/post.frag"), eFragment);
+		.attach(readfile(IVY_SHADERS "/screen.vert"), vk::ShaderStageFlagBits::eVertex)
+		.attach(readfile(IVY_SHADERS "/post.frag"), vk::ShaderStageFlagBits::eFragment);
 
-	pipelines.environment = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
+	pipelines.environment = littlevk::PipelineAssembler <littlevk::eGraphics> (vrb.device, vrb.window, vrb.dal)
 		.with_render_pass(vk.render_pass, 2)
 		.with_vertex_layout(vlayout)
 		.with_shader_bundle(bundle)
 		.with_dsl_bindings(environment_dslbs)
-		.with_push_constant <RayFrameExtra> (eFragment);
+		.with_push_constant <RayFrameExtra> (vk::ShaderStageFlagBits::eFragment);
 }
 
 void Viewport::cache_geometry_properties(ComponentRef <Geometry> &g)
@@ -341,7 +341,7 @@ void Viewport::cache_geometry_properties(ComponentRef <Geometry> &g)
 		.buffer(&vmat, sizeof(vmat), vk::BufferUsageFlagBits::eUniformBuffer);
 
 	littlevk::bind(vrb.device, dset, rendering_dslbs)
-		.update(0, 0, sampler, image.view, eShaderReadOnlyOptimal)
+		.update(0, 0, sampler, image.view, vk::ImageLayout::eShaderReadOnlyOptimal)
 		.update(1, 0, *scrap.shl, 0, sizeof(SHLighting))
 		.update(2, 0, *material_buffer, 0, sizeof(VulkanMaterial))
 		.finalize();
@@ -392,7 +392,7 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 			mvp.model = transform->matrix();
 //				mvp.model = glm::mat4(1.0f);
 
-			cmd.pushConstants <MVPConstants> (ppl.layout, eVertex, 0, mvp);
+			cmd.pushConstants <MVPConstants> (ppl.layout, vk::ShaderStageFlagBits::eVertex, 0, mvp);
 			cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout, 0, dset, {});
 			cmd.bindVertexBuffers(0, { vg.vertices.buffer }, { 0 });
 			cmd.bindIndexBuffer(vg.triangles.buffer, 0, vk::IndexType::eUint32);
@@ -419,7 +419,7 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 		rayframe_extra.near = camera.near;
 		rayframe_extra.far = camera.far;
 
-		cmd.pushConstants <RayFrameExtra> (ppl.layout, eFragment, 0, rayframe_extra);
+		cmd.pushConstants <RayFrameExtra> (ppl.layout, vk::ShaderStageFlagBits::eFragment, 0, rayframe_extra);
 
 		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout,
 			0, scrap.sdf_descriptor, {});
@@ -451,7 +451,7 @@ void Viewport::render(const vk::CommandBuffer &cmd, const littlevk::SurfaceOpera
 		rayframe_extra.near = camera.near;
 		rayframe_extra.far = camera.far;
 
-		cmd.pushConstants <RayFrameExtra> (ppl.layout, eFragment, 0, rayframe_extra);
+		cmd.pushConstants <RayFrameExtra> (ppl.layout, vk::ShaderStageFlagBits::eFragment, 0, rayframe_extra);
 
 		cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, ppl.layout,
 			0, scrap.environment_descriptor, {});

@@ -3,6 +3,8 @@
 #include "texture.hpp"
 #include "contexts.hpp"
 
+namespace ivy {
+
 struct DeviceTextureCache {
 	vk::Device device;
 	vk::CommandPool command_pool;
@@ -34,3 +36,5 @@ struct DeviceTextureCache {
 		return dtc;
 	}
 };
+
+}

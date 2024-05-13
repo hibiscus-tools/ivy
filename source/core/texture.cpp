@@ -1,7 +1,18 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb/stb_image_write.h>
+
 #include "core/texture.hpp"
+
+namespace ivy {
+
+void Texture::save(const std::filesystem::path &path) const
+{
+	stbi_flip_vertically_on_write(true);
+	stbi_write_png(path.c_str(), width, height, 4, (uint8_t *) pixels.data(), width * sizeof(uint32_t));
+}
 
 Texture Texture::load(const std::filesystem::path &path)
 {
@@ -23,6 +34,7 @@ Texture Texture::load(const std::filesystem::path &path)
 	std::vector <uint8_t> vector;
 	vector.resize(width * height * 4);
 	memcpy(vector.data(), pixels, vector.size() * sizeof(uint8_t));
+	free(pixels);
 
 	return Texture {
 		.width = width,
@@ -40,4 +52,6 @@ Texture Texture::blank()
 		.channels = 4,
 		.pixels = { 0, 0, 0, 0 }
 	};
+}
+
 }

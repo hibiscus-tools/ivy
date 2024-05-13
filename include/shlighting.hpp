@@ -4,6 +4,8 @@
 
 #include "core/texture.hpp"
 
+namespace ivy {
+
 struct SHLighting {
 	glm::mat4 red;
 	glm::mat4 green;
@@ -11,3 +13,5 @@ struct SHLighting {
 
 	static SHLighting from(const Texture &);
 };
+
+}

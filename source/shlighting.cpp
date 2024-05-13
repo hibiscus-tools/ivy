@@ -4,6 +4,8 @@
 
 #include "shlighting.hpp"
 
+namespace ivy {
+
 SHLighting SHLighting::from(const Texture &tex)
 {
 	std::vector <glm::vec3> rgb = tex.as_rgb();
@@ -107,4 +109,6 @@ SHLighting SHLighting::from(const Texture &tex)
 	}
 
 	return { Ms[0], Ms[1], Ms[2] };
+}
+
 }

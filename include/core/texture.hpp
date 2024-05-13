@@ -5,6 +5,8 @@
 
 #include <glm/glm.hpp>
 
+namespace ivy {
+
 // Host texture
 struct Texture {
 	int width;
@@ -30,6 +32,10 @@ struct Texture {
 		return rgb;
 	}
 
+	void save(const std::filesystem::path &) const;
+
 	static Texture load(const std::filesystem::path &);
 	static Texture blank();
 };
+
+}

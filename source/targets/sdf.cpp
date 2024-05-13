@@ -197,7 +197,7 @@ int main()
 		.attach(readfile(IVY_SHADERS "/splat.vert"), vk::ShaderStageFlagBits::eVertex)
 		.attach(readfile(IVY_SHADERS "/sdf.frag"), vk::ShaderStageFlagBits::eFragment);
 
-	littlevk::Pipeline ppl = littlevk::PipelineAssembler(vrb.device, vrb.window, vrb.dal)
+	littlevk::Pipeline ppl = littlevk::PipelineAssembler <littlevk::eGraphics> (vrb.device, vrb.window, vrb.dal)
 		.with_render_pass(render_pass, 0)
 		.with_shader_bundle(bundle)
 		.alpha_blending(true)

@@ -2,6 +2,8 @@
 
 #include "core/caches.hpp"
 
+namespace ivy {
+
 void DeviceTextureCache::load(const std::filesystem::path &path)
 {
 	std::string tr = path.string();
@@ -49,4 +51,6 @@ void DeviceTextureCache::upload(const std::filesystem::path &path)
 	littlevk::destroy_buffer(device, staging);
 
 	device_textures[tr] = image;
+}
+
 }
